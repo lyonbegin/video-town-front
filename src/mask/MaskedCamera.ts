@@ -1,3 +1,8 @@
+import {
+  FacePaintRenderer,
+  type FacePaintLandmark,
+} from './FacePaintRenderer';
+
 export type CameraMode = 'mask' | 'original';
 
 export interface MaskedCameraController {
@@ -5,23 +10,9 @@ export interface MaskedCameraController {
   stop: () => void;
 }
 
-type Landmark = {
-  x: number;
-  y: number;
-  z?: number;
-};
-
 type TrackedFace = {
   score: number;
-  landmarks: Landmark[];
-};
-
-type FacePose = {
-  cx: number;
-  cy: number;
-  width: number;
-  height: number;
-  rotation: number;
+  landmarks: FacePaintLandmark[];
 };
 
 type FacemeshApi = {
@@ -76,28 +67,15 @@ const MICRO_FACEMESH_WEIGHTS =
 const ONE_EURO_MODULE =
   'https://cdn.jsdelivr.net/npm/1eurofilter@1.3.0/+esm';
 
-const LEFT_FACE = 234;
-const RIGHT_FACE = 454;
-const FOREHEAD = 10;
-const CHIN = 152;
-const LEFT_EYE_OUTER = 33;
-const RIGHT_EYE_OUTER = 263;
+const FACE_VERTEX_COUNT = 468;
 
 const INFERENCE_MAX_WIDTH = 512;
 const INFERENCE_MAX_HEIGHT = 288;
-const FILTER_FREQUENCY = 30;
 
-// One Euro Filter parameters.
-// Position: strong jitter suppression at rest, cutoff opens quickly with motion.
-// Scale: intentionally much steadier than position.
-// Rotation: moderate smoothing with adaptive response.
-const POSITION_MIN_CUTOFF = 0.8;
-const POSITION_BETA = 12.0;
-const SCALE_MIN_CUTOFF = 0.35;
-const SCALE_BETA = 1.5;
-const ROTATION_MIN_CUTOFF = 0.8;
-const ROTATION_BETA = 4.0;
-const DERIVATIVE_CUTOFF = 1.0;
+const FILTER_FREQUENCY = 30;
+const LANDMARK_MIN_CUTOFF = 0.8;
+const LANDMARK_BETA = 12.0;
+const LANDMARK_DERIVATIVE_CUTOFF = 1.0;
 
 let facemeshPromise: Promise<FacemeshApi> | undefined;
 let oneEuroModulePromise: Promise<OneEuroFilterModule> | undefined;
@@ -180,154 +158,6 @@ function waitForVideoReady(video: HTMLVideoElement): Promise<void> {
   });
 }
 
-function distancePx(
-  a: Landmark,
-  b: Landmark,
-  outputWidth: number,
-  outputHeight: number,
-): number {
-  const dx = (b.x - a.x) * outputWidth;
-  const dy = (b.y - a.y) * outputHeight;
-  return Math.hypot(dx, dy);
-}
-
-function poseFromLandmarks(
-  face: TrackedFace,
-  outputWidth: number,
-  outputHeight: number,
-): FacePose | undefined {
-  const landmarks = face.landmarks;
-
-  const left = landmarks[LEFT_FACE];
-  const right = landmarks[RIGHT_FACE];
-  const forehead = landmarks[FOREHEAD];
-  const chin = landmarks[CHIN];
-  const leftEye = landmarks[LEFT_EYE_OUTER];
-  const rightEye = landmarks[RIGHT_EYE_OUTER];
-
-  if (!left || !right || !forehead || !chin || !leftEye || !rightEye) {
-    return undefined;
-  }
-
-  const horizontalCenterX = ((left.x + right.x) * 0.5) * outputWidth;
-  const horizontalCenterY = ((left.y + right.y) * 0.5) * outputHeight;
-  const verticalCenterX = ((forehead.x + chin.x) * 0.5) * outputWidth;
-  const verticalCenterY = ((forehead.y + chin.y) * 0.5) * outputHeight;
-
-  const cx = (horizontalCenterX + verticalCenterX) * 0.5;
-  const cy = (horizontalCenterY + verticalCenterY) * 0.5;
-
-  const width = distancePx(left, right, outputWidth, outputHeight);
-  const height = distancePx(forehead, chin, outputWidth, outputHeight);
-
-  if (
-    !Number.isFinite(cx) ||
-    !Number.isFinite(cy) ||
-    !Number.isFinite(width) ||
-    !Number.isFinite(height) ||
-    width < 8 ||
-    height < 8
-  ) {
-    return undefined;
-  }
-
-  const rotation = Math.atan2(
-    (rightEye.y - leftEye.y) * outputHeight,
-    (rightEye.x - leftEye.x) * outputWidth,
-  );
-
-  return {
-    cx,
-    cy,
-    width,
-    height,
-    rotation,
-  };
-}
-
-function drawPaperMask(ctx: CanvasRenderingContext2D, pose: FacePose) {
-  const width = pose.width * 1.22;
-  const height = pose.height * 1.26;
-
-  ctx.save();
-  ctx.translate(pose.cx, pose.cy - pose.height * 0.015);
-  ctx.rotate(pose.rotation);
-
-  ctx.shadowColor = 'rgba(0, 0, 0, 0.30)';
-  ctx.shadowBlur = Math.max(6, width * 0.035);
-  ctx.shadowOffsetY = Math.max(2, height * 0.018);
-
-  ctx.beginPath();
-  ctx.ellipse(0, 0, width / 2, height / 2, 0, 0, Math.PI * 2);
-  ctx.fillStyle = '#eee9dc';
-  ctx.fill();
-
-  ctx.shadowColor = 'transparent';
-  ctx.lineWidth = Math.max(2, width * 0.010);
-  ctx.strokeStyle = 'rgba(54, 49, 43, 0.76)';
-  ctx.stroke();
-
-  ctx.beginPath();
-  ctx.moveTo(0, -height * 0.43);
-  ctx.lineTo(0, height * 0.43);
-  ctx.strokeStyle = 'rgba(116, 103, 86, 0.18)';
-  ctx.lineWidth = Math.max(1, width * 0.005);
-  ctx.stroke();
-
-  ctx.fillStyle = '#191919';
-  const eyeY = -height * 0.10;
-
-  ctx.beginPath();
-  ctx.ellipse(
-    -width * 0.19,
-    eyeY,
-    width * 0.085,
-    height * 0.027,
-    -0.06,
-    0,
-    Math.PI * 2,
-  );
-  ctx.fill();
-
-  ctx.beginPath();
-  ctx.ellipse(
-    width * 0.19,
-    eyeY,
-    width * 0.085,
-    height * 0.027,
-    0.06,
-    0,
-    Math.PI * 2,
-  );
-  ctx.fill();
-
-  ctx.beginPath();
-  ctx.moveTo(0, -height * 0.015);
-  ctx.lineTo(-width * 0.025, height * 0.10);
-  ctx.lineTo(width * 0.022, height * 0.10);
-  ctx.strokeStyle = 'rgba(35, 35, 35, 0.62)';
-  ctx.lineWidth = Math.max(1.5, width * 0.007);
-  ctx.stroke();
-
-  ctx.beginPath();
-  ctx.moveTo(-width * 0.12, height * 0.23);
-  ctx.quadraticCurveTo(0, height * 0.27, width * 0.12, height * 0.23);
-  ctx.strokeStyle = '#242424';
-  ctx.lineWidth = Math.max(2, width * 0.009);
-  ctx.stroke();
-
-  ctx.beginPath();
-  ctx.moveTo(-width * 0.49, -height * 0.02);
-  ctx.lineTo(-width * 0.60, 0);
-  ctx.moveTo(width * 0.49, -height * 0.02);
-  ctx.lineTo(width * 0.60, 0);
-  ctx.strokeStyle = 'rgba(240, 240, 235, 0.90)';
-  ctx.lineWidth = Math.max(2, width * 0.008);
-  ctx.stroke();
-
-  ctx.restore();
-}
-
 export async function createMaskedCameraStream(
   source: MediaStream,
 ): Promise<MaskedCameraController> {
@@ -371,20 +201,16 @@ export async function createMaskedCameraStream(
   );
 
   const inferenceWidth = Math.max(256, Math.round(sourceWidth * inferenceScale));
-  const inferenceHeight = Math.max(144, Math.round(sourceHeight * inferenceScale));
+  const inferenceHeight = Math.max(
+    144,
+    Math.round(sourceHeight * inferenceScale),
+  );
 
-  const canvas = document.createElement('canvas');
-  canvas.width = outputWidth;
-  canvas.height = outputHeight;
+  const outputCanvas = document.createElement('canvas');
+  outputCanvas.width = outputWidth;
+  outputCanvas.height = outputHeight;
 
-  const ctx = canvas.getContext('2d', {
-    alpha: false,
-    desynchronized: true,
-  });
-
-  if (!ctx) {
-    throw new Error('복면 렌더링 Canvas를 만들지 못했습니다.');
-  }
+  const renderer = new FacePaintRenderer(outputCanvas);
 
   const inferenceCanvas = document.createElement('canvas');
   inferenceCanvas.width = inferenceWidth;
@@ -396,54 +222,46 @@ export async function createMaskedCameraStream(
   });
 
   if (!inferenceCtx) {
+    renderer.dispose();
     throw new Error('복면 추적용 Canvas를 만들지 못했습니다.');
   }
 
   const { OneEuroFilter } = oneEuro;
 
-  const filterX = new OneEuroFilter(
-    FILTER_FREQUENCY,
-    POSITION_MIN_CUTOFF,
-    POSITION_BETA,
-    DERIVATIVE_CUTOFF,
+  const filtersX = Array.from(
+    { length: FACE_VERTEX_COUNT },
+    () =>
+      new OneEuroFilter(
+        FILTER_FREQUENCY,
+        LANDMARK_MIN_CUTOFF,
+        LANDMARK_BETA,
+        LANDMARK_DERIVATIVE_CUTOFF,
+      ),
   );
-  const filterY = new OneEuroFilter(
-    FILTER_FREQUENCY,
-    POSITION_MIN_CUTOFF,
-    POSITION_BETA,
-    DERIVATIVE_CUTOFF,
-  );
-  const filterWidth = new OneEuroFilter(
-    FILTER_FREQUENCY,
-    SCALE_MIN_CUTOFF,
-    SCALE_BETA,
-    DERIVATIVE_CUTOFF,
-  );
-  const filterHeight = new OneEuroFilter(
-    FILTER_FREQUENCY,
-    SCALE_MIN_CUTOFF,
-    SCALE_BETA,
-    DERIVATIVE_CUTOFF,
-  );
-  const filterRotation = new OneEuroFilter(
-    FILTER_FREQUENCY,
-    ROTATION_MIN_CUTOFF,
-    ROTATION_BETA,
-    DERIVATIVE_CUTOFF,
+
+  const filtersY = Array.from(
+    { length: FACE_VERTEX_COUNT },
+    () =>
+      new OneEuroFilter(
+        FILTER_FREQUENCY,
+        LANDMARK_MIN_CUTOFF,
+        LANDMARK_BETA,
+        LANDMARK_DERIVATIVE_CUTOFF,
+      ),
   );
 
   const resetFilters = () => {
-    filterX.reset();
-    filterY.reset();
-    filterWidth.reset();
-    filterHeight.reset();
-    filterRotation.reset();
+    for (let i = 0; i < FACE_VERTEX_COUNT; i++) {
+      filtersX[i].reset();
+      filtersY[i].reset();
+    }
   };
 
-  const canvasStream = canvas.captureStream(30);
+  const canvasStream = outputCanvas.captureStream(30);
   const maskedVideoTrack = canvasStream.getVideoTracks()[0];
 
   if (!maskedVideoTrack) {
+    renderer.dispose();
     throw new Error('복면 영상 트랙을 만들지 못했습니다.');
   }
 
@@ -461,15 +279,16 @@ export async function createMaskedCameraStream(
   let detecting = false;
   let lastSubmittedAt: number | undefined;
   let hadTrackedFace = false;
-  let filteredPose: FacePose | undefined;
+  let filteredLandmarks: FacePaintLandmark[] | undefined;
 
   const runInference = async (submittedAt: number) => {
     if (stopped || detecting) return;
 
     detecting = true;
 
-    // micro-facemesh's tracked path returns the previous pipelined result.
-    // Feed One Euro with that result's measurement time, not render time.
+    // micro-facemesh returns the previous pipelined tracking result while the
+    // ROI tracker is locked. Give One Euro the measurement timestamp rather
+    // than the later render timestamp.
     const measurementAt =
       hadTrackedFace && lastSubmittedAt !== undefined
         ? lastSubmittedAt
@@ -481,17 +300,13 @@ export async function createMaskedCameraStream(
       const faces = await facemesh.detect(inferenceCanvas);
       const face = faces[0];
 
-      if (!face || face.score < 0.1) {
+      if (
+        !face ||
+        face.score < 0.1 ||
+        face.landmarks.length < FACE_VERTEX_COUNT
+      ) {
         hadTrackedFace = false;
-        filteredPose = undefined;
-        resetFilters();
-        return;
-      }
-
-      const measured = poseFromLandmarks(face, outputWidth, outputHeight);
-
-      if (!measured) {
-        filteredPose = undefined;
+        filteredLandmarks = undefined;
         resetFilters();
         return;
       }
@@ -499,45 +314,23 @@ export async function createMaskedCameraStream(
       hadTrackedFace = true;
 
       const timestampSeconds = measurementAt / 1000;
+      const nextLandmarks = new Array<FacePaintLandmark>(FACE_VERTEX_COUNT);
 
-      // Filter normalized values so the One Euro parameters remain independent
-      // of camera resolution.
-      const cx = filterX.filter(
-        measured.cx / outputWidth,
-        timestampSeconds,
-      ) * outputWidth;
+      for (let i = 0; i < FACE_VERTEX_COUNT; i++) {
+        const landmark = face.landmarks[i];
 
-      const cy = filterY.filter(
-        measured.cy / outputHeight,
-        timestampSeconds,
-      ) * outputHeight;
+        nextLandmarks[i] = {
+          x: filtersX[i].filter(landmark.x, timestampSeconds),
+          y: filtersY[i].filter(landmark.y, timestampSeconds),
+          z: landmark.z,
+        };
+      }
 
-      const width = filterWidth.filter(
-        measured.width / outputWidth,
-        timestampSeconds,
-      ) * outputWidth;
-
-      const height = filterHeight.filter(
-        measured.height / outputHeight,
-        timestampSeconds,
-      ) * outputHeight;
-
-      const rotation = filterRotation.filter(
-        measured.rotation,
-        timestampSeconds,
-      );
-
-      filteredPose = {
-        cx,
-        cy,
-        width,
-        height,
-        rotation,
-      };
+      filteredLandmarks = nextLandmarks;
     } catch (error) {
-      console.warn('[mask] tracking/filtering failed', error);
-      filteredPose = undefined;
+      console.warn('[mask] face mesh tracking/filtering failed', error);
       hadTrackedFace = false;
+      filteredLandmarks = undefined;
       resetFilters();
     } finally {
       detecting = false;
@@ -592,11 +385,7 @@ export async function createMaskedCameraStream(
   const render = () => {
     if (stopped) return;
 
-    ctx.drawImage(video, 0, 0, outputWidth, outputHeight);
-
-    if (filteredPose) {
-      drawPaperMask(ctx, filteredPose);
-    }
+    renderer.render(video, filteredLandmarks);
 
     renderRaf = requestAnimationFrame(render);
   };
@@ -625,6 +414,7 @@ export async function createMaskedCameraStream(
     });
 
     resetFilters();
+    renderer.dispose();
 
     try {
       facemesh.reset();
