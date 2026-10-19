@@ -5,6 +5,29 @@ export interface MaskedCameraController {
   stop: () => void;
 }
 
+export interface MaskTuning {
+  // Extra display-stage One Euro filter that we apply after MindAR.
+  postMinCutoff: number;
+  postBeta: number;
+
+  // MindAR's own built-in One Euro filter.
+  mindarMinCutoff: number;
+  mindarBeta: number;
+}
+
+export const DEFAULT_MASK_TUNING: MaskTuning = {
+  postMinCutoff: 0.0007,
+  postBeta: 3.0,
+  mindarMinCutoff: 0.001,
+  mindarBeta: 1.0,
+};
+
+type MindAREstimate = {
+  metricLandmarks: number[][];
+  faceMatrix: number[];
+  faceScale: number;
+};
+
 type MindARThreeInstance = {
   renderer: {
     domElement: HTMLCanvasElement;
@@ -35,11 +58,7 @@ type MindARThreeInstance = {
       };
     };
   };
-  getLatestEstimate: () => {
-    metricLandmarks: number[][];
-    faceMatrix: number[];
-    faceScale: number;
-  } | null;
+  getLatestEstimate: () => MindAREstimate | null;
   start: () => Promise<void>;
   stop: () => void;
 };
@@ -72,20 +91,103 @@ const THREE_SPECIFIER = 'three';
 const FACE_TEXTURE_URL =
   'https://cdn.jsdelivr.net/gh/hiukim/mind-ar-js@1.2.5/examples/face-tracking/assets/sparkar/face-mask.png';
 
-// MindAR already uses One Euro internally. Keep that implementation, but tune it
-// for stronger idle stability and a faster response once motion is real.
-const MINDAR_FILTER_MIN_CF = 0.0007;
-const MINDAR_FILTER_BETA = 3.0;
-
-// MindAR filters metricLandmarks internally, but its FaceGeometry update path
-// writes the raw estimate into the visible mesh. We copy the filtered landmarks
-// back into the visible geometry and suppress only sub-threshold micro motion.
-const LANDMARK_DEADBAND_RATIO = 0.0007;
-const LANDMARK_DEADBAND_MIN = 0.003;
-
-// Keep the last valid mesh briefly when the detector misses a few frames.
-// This prevents blink-off/blink-on without adding motion latency.
+const FACE_VERTEX_COUNT = 468;
 const FACE_LOSS_GRACE_MS = 420;
+
+// This is the same One Euro implementation used by MindAR:
+// src/libs/one-euro-filter.js. MindAR uses timestamps in milliseconds and
+// dCutOff=0.001, which corresponds to 1 Hz with that time unit.
+class MindAROneEuroFilter {
+  private readonly minCutOff: number;
+  private readonly beta: number;
+  private readonly dCutOff = 0.001;
+
+  private xPrev: Float32Array | null = null;
+  private dxPrev: Float32Array | null = null;
+  private tPrev = 0;
+  private initialized = false;
+
+  constructor(minCutOff: number, beta: number) {
+    this.minCutOff = minCutOff;
+    this.beta = beta;
+  }
+
+  reset() {
+    this.initialized = false;
+    this.xPrev = null;
+    this.dxPrev = null;
+  }
+
+  filter(t: number, x: Float32Array): Float32Array {
+    if (!this.initialized || !this.xPrev || !this.dxPrev) {
+      this.initialized = true;
+      this.xPrev = new Float32Array(x);
+      this.dxPrev = new Float32Array(x.length);
+      this.tPrev = t;
+      return new Float32Array(x);
+    }
+
+    const te = Math.max(0.001, t - this.tPrev);
+    const ad = this.smoothingFactor(te, this.dCutOff);
+
+    const xHat = new Float32Array(x.length);
+    const dxHat = new Float32Array(x.length);
+
+    for (let i = 0; i < x.length; i++) {
+      const dx = (x[i] - this.xPrev[i]) / te;
+      dxHat[i] = ad * dx + (1 - ad) * this.dxPrev[i];
+
+      const cutOff =
+        this.minCutOff + this.beta * Math.abs(dxHat[i]);
+      const a = this.smoothingFactor(te, cutOff);
+
+      xHat[i] = a * x[i] + (1 - a) * this.xPrev[i];
+    }
+
+    this.xPrev = xHat;
+    this.dxPrev = dxHat;
+    this.tPrev = t;
+
+    return xHat;
+  }
+
+  private smoothingFactor(te: number, cutoff: number) {
+    const r = 2 * Math.PI * cutoff * te;
+    return r / (r + 1);
+  }
+}
+
+function sanitizeTuning(tuning?: Partial<MaskTuning>): MaskTuning {
+  const value = {
+    ...DEFAULT_MASK_TUNING,
+    ...tuning,
+  };
+
+  const finitePositive = (n: number, fallback: number) =>
+    Number.isFinite(n) && n > 0 ? n : fallback;
+
+  const finiteNonNegative = (n: number, fallback: number) =>
+    Number.isFinite(n) && n >= 0 ? n : fallback;
+
+  return {
+    postMinCutoff: finitePositive(
+      value.postMinCutoff,
+      DEFAULT_MASK_TUNING.postMinCutoff,
+    ),
+    postBeta: finiteNonNegative(
+      value.postBeta,
+      DEFAULT_MASK_TUNING.postBeta,
+    ),
+    mindarMinCutoff: finitePositive(
+      value.mindarMinCutoff,
+      DEFAULT_MASK_TUNING.mindarMinCutoff,
+    ),
+    mindarBeta: finiteNonNegative(
+      value.mindarBeta,
+      DEFAULT_MASK_TUNING.mindarBeta,
+    ),
+  };
+}
 
 async function loadOfficialMindARModules() {
   const [mindar, three] = await Promise.all([
@@ -124,7 +226,9 @@ function createOffscreenContainer() {
 
 export async function createMaskedCameraStream(
   source: MediaStream,
+  tuningInput?: Partial<MaskTuning>,
 ): Promise<MaskedCameraController> {
+  const tuning = sanitizeTuning(tuningInput);
   const sourceVideoTrack = source.getVideoTracks()[0];
 
   if (!sourceVideoTrack) {
@@ -152,8 +256,8 @@ export async function createMaskedCameraStream(
     const mindar = new MindARThree({
       container,
       userDeviceId: deviceId,
-      filterMinCF: MINDAR_FILTER_MIN_CF,
-      filterBeta: MINDAR_FILTER_BETA,
+      filterMinCF: tuning.mindarMinCutoff,
+      filterBeta: tuning.mindarBeta,
     });
 
     mindarThree = mindar;
@@ -205,8 +309,6 @@ export async function createMaskedCameraStream(
       throw new Error('MindAR FaceMesh 출력 Canvas를 만들지 못했습니다.');
     }
 
-    // Match the browser render cadence more closely. The previous 30fps cap
-    // added visible follow lag compared with the original MindAR demo.
     const canvasStream = outputCanvas.captureStream(60);
     const outputVideoTrack = canvasStream.getVideoTracks()[0];
 
@@ -221,56 +323,35 @@ export async function createMaskedCameraStream(
       ...source.getAudioTracks(),
     ]);
 
+    const postFilter = new MindAROneEuroFilter(
+      tuning.postMinCutoff,
+      tuning.postBeta,
+    );
+
+    const flatMetric = new Float32Array(FACE_VERTEX_COUNT * 3);
+
     let lastSeenAt = 0;
     let everSeenFace = false;
-    let haveDisplayedLandmarks = false;
 
-    const displayedLandmarks = new Float32Array(468 * 3);
-
-    const applyFilteredGeometry = (
+    const applyPostFilter = (
       metricLandmarks: number[][],
-      faceScale: number,
+      now: number,
     ) => {
-      if (!metricLandmarks || metricLandmarks.length < 468) return;
-
-      const position = faceMesh.geometry.attributes.position;
-      const target = position.array;
-      const deadband = Math.max(
-        LANDMARK_DEADBAND_MIN,
-        Math.abs(faceScale || 1) * LANDMARK_DEADBAND_RATIO,
-      );
-
-      if (!haveDisplayedLandmarks) {
-        for (let i = 0; i < 468; i++) {
-          const base = i * 3;
-          displayedLandmarks[base] = metricLandmarks[i][0];
-          displayedLandmarks[base + 1] = metricLandmarks[i][1];
-          displayedLandmarks[base + 2] = metricLandmarks[i][2];
-        }
-        haveDisplayedLandmarks = true;
-      } else {
-        for (let i = 0; i < 468; i++) {
-          const base = i * 3;
-
-          for (let axis = 0; axis < 3; axis++) {
-            const currentValue = displayedLandmarks[base + axis];
-            const nextValue = metricLandmarks[i][axis];
-            const delta = nextValue - currentValue;
-
-            if (Math.abs(delta) <= deadband) {
-              continue;
-            }
-
-            // Soft deadband: keep only the tiny noise band out of the motion.
-            // There is no EMA/prediction stage here, so deliberate motion
-            // remains essentially as fast as MindAR's own filtered result.
-            displayedLandmarks[base + axis] =
-              nextValue - Math.sign(delta) * deadband;
-          }
-        }
+      if (!metricLandmarks || metricLandmarks.length < FACE_VERTEX_COUNT) {
+        return;
       }
 
-      target.set(displayedLandmarks);
+      for (let i = 0; i < FACE_VERTEX_COUNT; i++) {
+        const base = i * 3;
+        flatMetric[base] = metricLandmarks[i][0];
+        flatMetric[base + 1] = metricLandmarks[i][1];
+        flatMetric[base + 2] = metricLandmarks[i][2];
+      }
+
+      const filtered = postFilter.filter(now, flatMetric);
+      const position = faceMesh.geometry.attributes.position;
+
+      position.array.set(filtered);
       position.needsUpdate = true;
     };
 
@@ -284,23 +365,18 @@ export async function createMaskedCameraStream(
         everSeenFace = true;
         faceMesh.visible = true;
 
-        // This is MindAR's already One-Euro-filtered landmark set.
-        // Writing it back here fixes the upstream FaceGeometry path that
-        // otherwise uses the raw estimate and visibly jitters.
-        applyFilteredGeometry(
-          estimate.metricLandmarks,
-          estimate.faceScale,
-        );
+        // Layer 1: MindAR internal One Euro.
+        // Layer 2: separately tunable display-stage One Euro.
+        applyPostFilter(estimate.metricLandmarks, now);
       } else if (everSeenFace && now - lastSeenAt <= FACE_LOSS_GRACE_MS) {
         faceMesh.visible = true;
       } else if (everSeenFace) {
         faceMesh.visible = false;
-        haveDisplayedLandmarks = false;
+        postFilter.reset();
       }
 
       renderer.render(scene, camera);
 
-      // Compose the two official MindAR visual layers into a streamable canvas.
       ctx.save();
       ctx.translate(outputCanvas.width, 0);
       ctx.scale(-1, 1);
