@@ -2,6 +2,7 @@
 import {
   createMaskedCameraStream,
   DEFAULT_MASK_TUNING,
+  type CalibrationResult,
   type CameraMode,
   type MaskedCameraController,
   type MaskTuning,
@@ -43,6 +44,13 @@ export default function DeviceCheck({
   const [mindarBeta, setMindarBeta] = useState(
     DEFAULT_MASK_TUNING.mindarBeta,
   );
+  const [calibrating, setCalibrating] = useState(false);
+  const [calibrationStartedAt, setCalibrationStartedAt] = useState(0);
+  const [calibrationElapsed, setCalibrationElapsed] = useState(0);
+  const [calibrationSamples, setCalibrationSamples] = useState(0);
+  const [calibrationResult, setCalibrationResult] =
+    useState<CalibrationResult | null>(null);
+  const [calibrationMessage, setCalibrationMessage] = useState('');
 
   const currentTuning = (): MaskTuning => ({
     postMinCutoff,
@@ -93,6 +101,28 @@ export default function DeviceCheck({
     };
   }, [stream]);
 
+  useEffect(() => {
+    if (!calibrating) {
+      setCalibrationElapsed(0);
+      return;
+    }
+
+    const update = () => {
+      setCalibrationElapsed(
+        Math.max(0, (performance.now() - calibrationStartedAt) / 1000),
+      );
+
+      setCalibrationSamples(
+        maskControllerRef.current?.getCalibrationSampleCount() ?? 0,
+      );
+    };
+
+    update();
+    const timer = window.setInterval(update, 200);
+
+    return () => window.clearInterval(timer);
+  }, [calibrating, calibrationStartedAt]);
+
   const cameras = useMemo(
     () => devices.filter((d) => d.kind === 'videoinput'),
     [devices],
@@ -111,6 +141,7 @@ export default function DeviceCheck({
   ) {
     setBusy(true);
     setError('');
+    setCalibrating(false);
 
     try {
       // Stop only the previous client camera pipeline.
@@ -178,6 +209,66 @@ export default function DeviceCheck({
       );
     } finally {
       setBusy(false);
+    }
+  }
+
+  function startAutoCalibration() {
+    const controller = maskControllerRef.current;
+
+    if (!controller || cameraMode !== 'mask') {
+      setCalibrationMessage('복면 카메라를 먼저 시작해주세요.');
+      return;
+    }
+
+    setCalibrationResult(null);
+    setCalibrationMessage(
+      '녹화 중입니다. 처음에는 잠깐 정면으로 가만히 있고, 이어서 좌우·상하로 자연스럽게 움직여주세요.',
+    );
+    setCalibrationSamples(0);
+    setCalibrationStartedAt(performance.now());
+    controller.startCalibration();
+    setCalibrating(true);
+  }
+
+  async function finishAutoCalibration() {
+    const controller = maskControllerRef.current;
+
+    if (!controller || !calibrating) return;
+
+    setCalibrating(false);
+    setCalibrationMessage('녹화를 끝냈습니다. 최적 필터 값을 계산하고 있습니다…');
+
+    // Let React paint the analysis state before the synchronous replay search.
+    await new Promise<void>((resolve) =>
+      requestAnimationFrame(() => resolve()),
+    );
+
+    try {
+      const result = controller.finishCalibration();
+
+      setCalibrationResult(result);
+      setPostMinCutoff(result.tuning.postMinCutoff);
+      setPostBeta(result.tuning.postBeta);
+      setMindarMinCutoff(result.tuning.mindarMinCutoff);
+      setMindarBeta(result.tuning.mindarBeta);
+
+      setCalibrationMessage(
+        `자동 캘리브레이션 완료 · ${result.sampleCount}프레임 · ${(
+          result.durationMs / 1000
+        ).toFixed(1)}초 · score ${result.score.toFixed(6)}`,
+      );
+
+      // Restart the MindAR pipeline once with the chosen values so both the
+      // constructor-level MindAR filter and post filter use the result.
+      await acquire(
+        cameraId,
+        micId,
+        'mask',
+        result.tuning,
+      );
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      setCalibrationMessage(`자동 캘리브레이션 실패: ${message}`);
     }
   }
 
@@ -374,6 +465,80 @@ export default function DeviceCheck({
                 추가 필터 기본값: minCutOff 0.0007 / beta 3.0 ·
                 MindAR 원본 기본값: minCutOff 0.001 / beta 1.0
               </p>
+
+              <div className="section-kicker">자동 캘리브레이션</div>
+
+              <p className="muted-text">
+                시작 버튼부터 끝 버튼까지 실제 얼굴 landmark를 녹화한 뒤,
+                같은 녹화 데이터를 여러 필터 값으로 반복 계산해서
+                지터와 추적 오차가 가장 작은 조합을 찾습니다.
+              </p>
+
+              <div className="camera-mode-selector">
+                <button
+                  type="button"
+                  className={`camera-mode-button ${calibrating ? 'active' : ''}`}
+                  onClick={startAutoCalibration}
+                  disabled={
+                    busy ||
+                    ready ||
+                    disabled ||
+                    calibrating ||
+                    !maskControllerRef.current
+                  }
+                >
+                  <strong>● 캘리브레이션 시작</strong>
+                  <span>얼굴 포인트 녹화 시작</span>
+                </button>
+
+                <button
+                  type="button"
+                  className="camera-mode-button"
+                  onClick={() => void finishAutoCalibration()}
+                  disabled={
+                    busy ||
+                    ready ||
+                    disabled ||
+                    !calibrating
+                  }
+                >
+                  <strong>■ 캘리브레이션 끝</strong>
+                  <span>녹화 종료 후 자동 분석·적용</span>
+                </button>
+              </div>
+
+              {calibrating && (
+                <p className="muted-text">
+                  녹화 중 · {calibrationElapsed.toFixed(1)}초 ·
+                  {' '}{calibrationSamples}프레임
+                </p>
+              )}
+
+              {calibrationMessage && (
+                <div className="preview-badge">
+                  {calibrationMessage}
+                </div>
+              )}
+
+              {calibrationResult && (
+                <div className="device-grid">
+                  <label>
+                    <span>자동 결과 · tracking error</span>
+                    <input
+                      readOnly
+                      value={calibrationResult.trackingError.toFixed(6)}
+                    />
+                  </label>
+
+                  <label>
+                    <span>자동 결과 · stationary jitter</span>
+                    <input
+                      readOnly
+                      value={calibrationResult.stationaryJitter.toFixed(6)}
+                    />
+                  </label>
+                </div>
+              )}
             </>
           )}
 
