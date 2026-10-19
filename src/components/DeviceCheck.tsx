@@ -1,8 +1,10 @@
 ﻿import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   createMaskedCameraStream,
+  DEFAULT_MASK_TUNING,
   type CameraMode,
   type MaskedCameraController,
+  type MaskTuning,
 } from '../mask/MaskedCamera';
 
 interface Props {
@@ -29,6 +31,25 @@ export default function DeviceCheck({
   const [micId, setMicId] = useState('');
   const [level, setLevel] = useState(0);
   const [cameraMode, setCameraMode] = useState<CameraMode>('mask');
+  const [postMinCutoff, setPostMinCutoff] = useState(
+    DEFAULT_MASK_TUNING.postMinCutoff,
+  );
+  const [postBeta, setPostBeta] = useState(
+    DEFAULT_MASK_TUNING.postBeta,
+  );
+  const [mindarMinCutoff, setMindarMinCutoff] = useState(
+    DEFAULT_MASK_TUNING.mindarMinCutoff,
+  );
+  const [mindarBeta, setMindarBeta] = useState(
+    DEFAULT_MASK_TUNING.mindarBeta,
+  );
+
+  const currentTuning = (): MaskTuning => ({
+    postMinCutoff,
+    postBeta,
+    mindarMinCutoff,
+    mindarBeta,
+  });
 
   useEffect(() => {
     if (previewRef.current) previewRef.current.srcObject = stream ?? null;
@@ -86,6 +107,7 @@ export default function DeviceCheck({
     nextCameraId = cameraId,
     nextMicId = micId,
     nextMode: CameraMode = cameraMode,
+    nextTuning: MaskTuning = currentTuning(),
   ) {
     setBusy(true);
     setError('');
@@ -126,7 +148,10 @@ export default function DeviceCheck({
 
       if (nextMode === 'mask') {
         try {
-          const controller = await createMaskedCameraStream(raw);
+          const controller = await createMaskedCameraStream(
+            raw,
+            nextTuning,
+          );
           maskControllerRef.current = controller;
           outgoing = controller.stream;
         } catch (maskError) {
@@ -260,6 +285,97 @@ export default function DeviceCheck({
               </select>
             </label>
           </div>
+
+          {cameraMode === 'mask' && (
+            <>
+              <div className="section-kicker">복면 추적 필터 수동 조정</div>
+
+              <div className="device-grid">
+                <label>
+                  <span>추가 One Euro · minCutOff</span>
+                  <input
+                    type="number"
+                    min="0.00005"
+                    max="0.1"
+                    step="0.0001"
+                    value={postMinCutoff}
+                    onChange={(e) =>
+                      setPostMinCutoff(Number(e.target.value))
+                    }
+                    disabled={busy || ready}
+                  />
+                </label>
+
+                <label>
+                  <span>추가 One Euro · beta</span>
+                  <input
+                    type="number"
+                    min="0"
+                    max="30"
+                    step="0.1"
+                    value={postBeta}
+                    onChange={(e) =>
+                      setPostBeta(Number(e.target.value))
+                    }
+                    disabled={busy || ready}
+                  />
+                </label>
+              </div>
+
+              <div className="device-grid">
+                <label>
+                  <span>MindAR 원본 필터 · minCutOff</span>
+                  <input
+                    type="number"
+                    min="0.00005"
+                    max="0.1"
+                    step="0.0001"
+                    value={mindarMinCutoff}
+                    onChange={(e) =>
+                      setMindarMinCutoff(Number(e.target.value))
+                    }
+                    disabled={busy || ready}
+                  />
+                </label>
+
+                <label>
+                  <span>MindAR 원본 필터 · beta</span>
+                  <input
+                    type="number"
+                    min="0"
+                    max="30"
+                    step="0.1"
+                    value={mindarBeta}
+                    onChange={(e) =>
+                      setMindarBeta(Number(e.target.value))
+                    }
+                    disabled={busy || ready}
+                  />
+                </label>
+              </div>
+
+              <button
+                type="button"
+                className="primary-button"
+                onClick={() =>
+                  void acquire(
+                    cameraId,
+                    micId,
+                    'mask',
+                    currentTuning(),
+                  )
+                }
+                disabled={busy || ready || disabled}
+              >
+                {busy ? '필터 적용 중…' : '필터 값 적용'}
+              </button>
+
+              <p className="muted-text">
+                추가 필터 기본값: minCutOff 0.0007 / beta 3.0 ·
+                MindAR 원본 기본값: minCutOff 0.001 / beta 1.0
+              </p>
+            </>
+          )}
 
           <div className="mic-meter-row">
             <span>마이크 입력</span>
