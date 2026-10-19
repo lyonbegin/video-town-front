@@ -114,7 +114,7 @@ const MINDAR_SPECIFIER = 'mindar-face-three';
 const THREE_SPECIFIER = 'three';
 
 const FACE_TEXTURE_URL =
-  'https://cdn.jsdelivr.net/gh/hiukim/mind-ar-js@1.2.5/examples/face-tracking/assets/canonical_face_model_uv_visualization.png';
+  'https://cdn.jsdelivr.net/gh/hiukim/mind-ar-js@1.2.5/examples/face-tracking/assets/sparkar/face-mask.png';
 
 // MindAR's OneEuroFilter uses milliseconds. 0.001 corresponds to 1 Hz.
 // Lower min cutoff suppresses idle jitter; higher beta opens the filter faster
