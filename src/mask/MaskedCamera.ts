@@ -24,8 +24,14 @@ type FacePose = {
   rotation: number;
 };
 
+type FilteredPose = FacePose & {
+  vx: number;
+  vy: number;
+  lastMeasurementAt: number;
+};
+
 type FacemeshApi = {
-  detect: (source: HTMLVideoElement) => Promise<TrackedFace[]>;
+  detect: (source: HTMLCanvasElement) => Promise<TrackedFace[]>;
   reset: () => void;
   dispose: () => void;
 };
@@ -39,14 +45,46 @@ type MicroFacemeshModule = {
   }) => Promise<FacemeshApi>;
 };
 
+type VideoFrameMetadataLite = {
+  presentationTime?: number;
+  mediaTime?: number;
+};
+
+type VideoWithFrameCallback = HTMLVideoElement & {
+  requestVideoFrameCallback?: (
+    callback: (now: number, metadata: VideoFrameMetadataLite) => void,
+  ) => number;
+  cancelVideoFrameCallback?: (id: number) => void;
+};
+
 const MICRO_FACEMESH_MODULE =
   'https://cdn.jsdelivr.net/npm/@svenflow/micro-facemesh@0.1.2/+esm';
 
 const MICRO_FACEMESH_WEIGHTS =
   'https://cdn.jsdelivr.net/npm/@svenflow/micro-facemesh@0.1.2/weights';
 
+// Stable landmarks. Width/height no longer comes from min/max of all 478 points.
+const LEFT_FACE = 234;
+const RIGHT_FACE = 454;
+const FOREHEAD = 10;
+const CHIN = 152;
 const LEFT_EYE_OUTER = 33;
 const RIGHT_EYE_OUTER = 263;
+
+const INFERENCE_MAX_WIDTH = 512;
+const INFERENCE_MAX_HEIGHT = 288;
+
+// Position should react fast. Size should react slowly.
+const POSITION_TAU_MS = 22;
+const ROTATION_TAU_MS = 70;
+const SIZE_TAU_MS = 180;
+const SIZE_DEADBAND = 0.018;
+const MAX_SIZE_CHANGE_PER_MEASUREMENT = 0.025;
+
+// micro-facemesh returns the previous pipelined tracking result on tracked frames.
+// Prediction compensates that age rather than drawing the stale point directly.
+const MAX_PREDICTION_MS = 90;
+const MAX_PREDICTION_FACE_RATIO = 0.16;
 
 let facemeshPromise: Promise<FacemeshApi> | undefined;
 
@@ -115,13 +153,32 @@ function waitForVideoReady(video: HTMLVideoElement): Promise<void> {
   });
 }
 
-function normalizeRoll(angle: number): number {
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
+}
+
+function alphaFor(dtMs: number, tauMs: number): number {
+  return 1 - Math.exp(-Math.max(1, dtMs) / tauMs);
+}
+
+function normalizeAngle(angle: number): number {
   let value = angle;
 
-  while (value > Math.PI / 2) value -= Math.PI;
-  while (value < -Math.PI / 2) value += Math.PI;
+  while (value > Math.PI) value -= Math.PI * 2;
+  while (value < -Math.PI) value += Math.PI * 2;
 
   return value;
+}
+
+function distancePx(
+  a: Landmark,
+  b: Landmark,
+  outputWidth: number,
+  outputHeight: number,
+): number {
+  const dx = (b.x - a.x) * outputWidth;
+  const dy = (b.y - a.y) * outputHeight;
+  return Math.hypot(dx, dy);
 }
 
 function poseFromLandmarks(
@@ -131,61 +188,156 @@ function poseFromLandmarks(
 ): FacePose | undefined {
   const landmarks = face.landmarks;
 
-  if (!landmarks || landmarks.length < 264) {
+  const left = landmarks[LEFT_FACE];
+  const right = landmarks[RIGHT_FACE];
+  const forehead = landmarks[FOREHEAD];
+  const chin = landmarks[CHIN];
+  const leftEye = landmarks[LEFT_EYE_OUTER];
+  const rightEye = landmarks[RIGHT_EYE_OUTER];
+
+  if (!left || !right || !forehead || !chin || !leftEye || !rightEye) {
     return undefined;
   }
 
-  let minX = Number.POSITIVE_INFINITY;
-  let minY = Number.POSITIVE_INFINITY;
-  let maxX = Number.NEGATIVE_INFINITY;
-  let maxY = Number.NEGATIVE_INFINITY;
+  const horizontalCenterX = ((left.x + right.x) * 0.5) * outputWidth;
+  const horizontalCenterY = ((left.y + right.y) * 0.5) * outputHeight;
+  const verticalCenterX = ((forehead.x + chin.x) * 0.5) * outputWidth;
+  const verticalCenterY = ((forehead.y + chin.y) * 0.5) * outputHeight;
 
-  for (const point of landmarks) {
-    if (!Number.isFinite(point.x) || !Number.isFinite(point.y)) continue;
+  // Averaging the horizontal and vertical center pairs makes the center much
+  // less sensitive to mouth/eyebrow expression than a 478-point bounding box.
+  const cx = (horizontalCenterX + verticalCenterX) * 0.5;
+  const cy = (horizontalCenterY + verticalCenterY) * 0.5;
 
-    minX = Math.min(minX, point.x);
-    minY = Math.min(minY, point.y);
-    maxX = Math.max(maxX, point.x);
-    maxY = Math.max(maxY, point.y);
-  }
+  const faceWidth = distancePx(left, right, outputWidth, outputHeight);
+  const faceHeight = distancePx(forehead, chin, outputWidth, outputHeight);
 
   if (
-    !Number.isFinite(minX) ||
-    !Number.isFinite(minY) ||
-    !Number.isFinite(maxX) ||
-    !Number.isFinite(maxY) ||
-    maxX <= minX ||
-    maxY <= minY
+    !Number.isFinite(cx) ||
+    !Number.isFinite(cy) ||
+    !Number.isFinite(faceWidth) ||
+    !Number.isFinite(faceHeight) ||
+    faceWidth < 8 ||
+    faceHeight < 8
   ) {
     return undefined;
   }
 
-  const leftEye = landmarks[LEFT_EYE_OUTER];
-  const rightEye = landmarks[RIGHT_EYE_OUTER];
-
-  let rotation = 0;
-
-  if (leftEye && rightEye) {
-    rotation = normalizeRoll(
-      Math.atan2(
-        (rightEye.y - leftEye.y) * outputHeight,
-        (rightEye.x - leftEye.x) * outputWidth,
-      ),
-    );
-  }
+  const rotation = Math.atan2(
+    (rightEye.y - leftEye.y) * outputHeight,
+    (rightEye.x - leftEye.x) * outputWidth,
+  );
 
   return {
-    cx: ((minX + maxX) / 2) * outputWidth,
-    cy: ((minY + maxY) / 2) * outputHeight,
-    width: (maxX - minX) * outputWidth,
-    height: (maxY - minY) * outputHeight,
+    cx,
+    cy,
+    width: faceWidth,
+    height: faceHeight,
     rotation,
   };
 }
 
+function stabilizeSize(
+  current: number,
+  measured: number,
+  dtMs: number,
+): number {
+  const safeCurrent = Math.max(1, current);
+  const relativeChange = Math.abs(measured - current) / safeCurrent;
+
+  // Ignore the tiny 1-2% landmark "breathing" that made the paper mask pump.
+  if (relativeChange < SIZE_DEADBAND) {
+    return current;
+  }
+
+  // Even on a real change, never allow one inference result to abruptly resize
+  // the mask. The target can move only a small percentage per measurement.
+  const maxStep = safeCurrent * MAX_SIZE_CHANGE_PER_MEASUREMENT;
+  const limitedTarget =
+    current + clamp(measured - current, -maxStep, maxStep);
+
+  const alpha = alphaFor(dtMs, SIZE_TAU_MS);
+  return current + (limitedTarget - current) * alpha;
+}
+
+function updateFilteredPose(
+  current: FilteredPose | undefined,
+  measured: FacePose,
+  measurementAt: number,
+): FilteredPose {
+  if (!current) {
+    return {
+      ...measured,
+      vx: 0,
+      vy: 0,
+      lastMeasurementAt: measurementAt,
+    };
+  }
+
+  const dtMs = clamp(measurementAt - current.lastMeasurementAt, 8, 160);
+  const positionAlpha = alphaFor(dtMs, POSITION_TAU_MS);
+  const rotationAlpha = alphaFor(dtMs, ROTATION_TAU_MS);
+
+  const rawVx = (measured.cx - current.cx) / dtMs;
+  const rawVy = (measured.cy - current.cy) / dtMs;
+
+  // Velocity is filtered separately from position. This is used only for
+  // short-horizon prediction, never for scale.
+  const velocityBlend = 0.42;
+  const maxVelocity = Math.max(current.width, current.height) * 0.018;
+
+  const vx = clamp(
+    current.vx * (1 - velocityBlend) + rawVx * velocityBlend,
+    -maxVelocity,
+    maxVelocity,
+  );
+
+  const vy = clamp(
+    current.vy * (1 - velocityBlend) + rawVy * velocityBlend,
+    -maxVelocity,
+    maxVelocity,
+  );
+
+  const rotationDelta = normalizeAngle(measured.rotation - current.rotation);
+
+  return {
+    cx: current.cx + (measured.cx - current.cx) * positionAlpha,
+    cy: current.cy + (measured.cy - current.cy) * positionAlpha,
+    width: stabilizeSize(current.width, measured.width, dtMs),
+    height: stabilizeSize(current.height, measured.height, dtMs),
+    rotation: current.rotation + rotationDelta * rotationAlpha,
+    vx,
+    vy,
+    lastMeasurementAt: measurementAt,
+  };
+}
+
+function predictPose(current: FilteredPose, now: number): FacePose {
+  const ageMs = clamp(now - current.lastMeasurementAt, 0, MAX_PREDICTION_MS);
+
+  let dx = current.vx * ageMs;
+  let dy = current.vy * ageMs;
+
+  const maxDx = current.width * MAX_PREDICTION_FACE_RATIO;
+  const maxDy = current.height * MAX_PREDICTION_FACE_RATIO;
+
+  dx = clamp(dx, -maxDx, maxDx);
+  dy = clamp(dy, -maxDy, maxDy);
+
+  return {
+    cx: current.cx + dx,
+    cy: current.cy + dy,
+    width: current.width,
+    height: current.height,
+    rotation: current.rotation,
+  };
+}
+
 function drawPaperMask(ctx: CanvasRenderingContext2D, pose: FacePose) {
-  const width = pose.width * 1.30;
-  const height = pose.height * 1.38;
+  // Stable face landmarks already describe the actual face dimensions.
+  // Keep only enough margin to cover the face fully.
+  const width = pose.width * 1.22;
+  const height = pose.height * 1.26;
 
   ctx.save();
   ctx.translate(pose.cx, pose.cy - pose.height * 0.015);
@@ -280,7 +432,6 @@ export async function createMaskedCameraStream(
   }
 
   const facemesh = await getFacemesh();
-
   facemesh.reset();
 
   const video = document.createElement('video');
@@ -295,9 +446,18 @@ export async function createMaskedCameraStream(
   const sourceWidth = video.videoWidth || 1280;
   const sourceHeight = video.videoHeight || 720;
 
-  const scale = Math.min(1, 1280 / sourceWidth, 720 / sourceHeight);
-  const outputWidth = Math.max(320, Math.round(sourceWidth * scale));
-  const outputHeight = Math.max(240, Math.round(sourceHeight * scale));
+  const outputScale = Math.min(1, 1280 / sourceWidth, 720 / sourceHeight);
+  const outputWidth = Math.max(320, Math.round(sourceWidth * outputScale));
+  const outputHeight = Math.max(240, Math.round(sourceHeight * outputScale));
+
+  const inferenceScale = Math.min(
+    1,
+    INFERENCE_MAX_WIDTH / sourceWidth,
+    INFERENCE_MAX_HEIGHT / sourceHeight,
+  );
+
+  const inferenceWidth = Math.max(256, Math.round(sourceWidth * inferenceScale));
+  const inferenceHeight = Math.max(144, Math.round(sourceHeight * inferenceScale));
 
   const canvas = document.createElement('canvas');
   canvas.width = outputWidth;
@@ -310,6 +470,23 @@ export async function createMaskedCameraStream(
 
   if (!ctx) {
     throw new Error('복면 렌더링 Canvas를 만들지 못했습니다.');
+  }
+
+  // Important performance change:
+  // micro-facemesh receives a small canvas, not the 1280x720 video element.
+  // Its own source shows HTMLVideoElement triggers createImageBitmap(), while
+  // HTMLCanvasElement goes straight to GPU upload.
+  const inferenceCanvas = document.createElement('canvas');
+  inferenceCanvas.width = inferenceWidth;
+  inferenceCanvas.height = inferenceHeight;
+
+  const inferenceCtx = inferenceCanvas.getContext('2d', {
+    alpha: false,
+    desynchronized: true,
+  });
+
+  if (!inferenceCtx) {
+    throw new Error('복면 추적용 Canvas를 만들지 못했습니다.');
   }
 
   const canvasStream = canvas.captureStream(30);
@@ -327,56 +504,119 @@ export async function createMaskedCameraStream(
   ]);
 
   let stopped = false;
-  let raf = 0;
+  let renderRaf = 0;
+  let fallbackInferenceRaf = 0;
+  let videoFrameCallbackId = 0;
   let detecting = false;
-  let lastTrackAt = 0;
-  let face: TrackedFace | undefined;
+  let lastSubmittedAt: number | undefined;
+  let hadFaceOnPreviousResult = false;
+  let filteredPose: FilteredPose | undefined;
 
-  const detect = async (now: number) => {
-    if (
-      stopped ||
-      detecting ||
-      now - lastTrackAt < 30 ||
-      video.readyState < 2 ||
-      video.videoWidth <= 0 ||
-      video.videoHeight <= 0
-    ) {
-      return;
-    }
+  const runInference = async (submittedAt: number) => {
+    if (stopped || detecting) return;
 
     detecting = true;
-    lastTrackAt = now;
+
+    // In the normal micro-facemesh tracking path, detect() returns the previous
+    // pipelined frame. Associate that result with the previous submission time.
+    const measurementAt =
+      hadFaceOnPreviousResult && lastSubmittedAt !== undefined
+        ? lastSubmittedAt
+        : submittedAt;
+
+    lastSubmittedAt = submittedAt;
 
     try {
-      // micro-facemesh owns the tracking pipeline:
-      // first frame / tracking loss -> BlazeFace full detection
-      // tracked frames -> previous 478 landmarks -> next ROI -> landmark inference
-      const faces = await facemesh.detect(video);
-      face = faces[0];
+      const faces = await facemesh.detect(inferenceCanvas);
+      const face = faces[0];
+
+      if (!face || face.score < 0.1) {
+        hadFaceOnPreviousResult = false;
+        filteredPose = undefined;
+        return;
+      }
+
+      hadFaceOnPreviousResult = true;
+
+      const measured = poseFromLandmarks(face, outputWidth, outputHeight);
+
+      if (!measured) {
+        filteredPose = undefined;
+        return;
+      }
+
+      filteredPose = updateFilteredPose(
+        filteredPose,
+        measured,
+        measurementAt,
+      );
     } catch (error) {
       console.warn('[mask] micro-facemesh tracking failed', error);
-      face = undefined;
+      filteredPose = undefined;
+      hadFaceOnPreviousResult = false;
     } finally {
       detecting = false;
     }
   };
+
+  const processVideoFrame = (now: number) => {
+    if (stopped) return;
+
+    if (!detecting && video.readyState >= 2) {
+      inferenceCtx.drawImage(
+        video,
+        0,
+        0,
+        inferenceWidth,
+        inferenceHeight,
+      );
+
+      void runInference(now);
+    }
+  };
+
+  const frameVideo = video as VideoWithFrameCallback;
+
+  if (frameVideo.requestVideoFrameCallback) {
+    const onVideoFrame = (now: number, _metadata: VideoFrameMetadataLite) => {
+      if (stopped) return;
+
+      processVideoFrame(now);
+
+      videoFrameCallbackId =
+        frameVideo.requestVideoFrameCallback!(onVideoFrame);
+    };
+
+    videoFrameCallbackId =
+      frameVideo.requestVideoFrameCallback(onVideoFrame);
+  } else {
+    // Fallback for browsers without requestVideoFrameCallback.
+    let lastFallbackInferenceAt = 0;
+
+    const fallbackInference = (now: number) => {
+      if (stopped) return;
+
+      if (now - lastFallbackInferenceAt >= 30) {
+        lastFallbackInferenceAt = now;
+        processVideoFrame(now);
+      }
+
+      fallbackInferenceRaf = requestAnimationFrame(fallbackInference);
+    };
+
+    fallbackInferenceRaf = requestAnimationFrame(fallbackInference);
+  }
 
   const render = (now: number) => {
     if (stopped) return;
 
     ctx.drawImage(video, 0, 0, outputWidth, outputHeight);
 
-    if (face && face.score >= 0.1) {
-      const pose = poseFromLandmarks(face, outputWidth, outputHeight);
-
-      if (pose) {
-        drawPaperMask(ctx, pose);
-      }
+    if (filteredPose) {
+      drawPaperMask(ctx, predictPose(filteredPose, now));
     }
 
-    void detect(now);
-
-    raf = requestAnimationFrame(render);
+    renderRaf = requestAnimationFrame(render);
   };
 
   const stop = () => {
@@ -384,7 +624,12 @@ export async function createMaskedCameraStream(
 
     stopped = true;
 
-    if (raf) cancelAnimationFrame(raf);
+    if (renderRaf) cancelAnimationFrame(renderRaf);
+    if (fallbackInferenceRaf) cancelAnimationFrame(fallbackInferenceRaf);
+
+    if (videoFrameCallbackId && frameVideo.cancelVideoFrameCallback) {
+      frameVideo.cancelVideoFrameCallback(videoFrameCallbackId);
+    }
 
     video.pause();
     video.srcObject = null;
@@ -407,7 +652,7 @@ export async function createMaskedCameraStream(
   maskedVideoTrack.addEventListener('ended', stop, { once: true });
   sourceVideoTrack.addEventListener('ended', stop, { once: true });
 
-  raf = requestAnimationFrame(render);
+  renderRaf = requestAnimationFrame(render);
 
   return {
     stream: output,
