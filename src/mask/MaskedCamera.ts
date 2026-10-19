@@ -1,11 +1,20 @@
-﻿import { FaceDetector, FilesetResolver } from '@mediapipe/tasks-vision';
-
 export type CameraMode = 'mask' | 'original';
 
 export interface MaskedCameraController {
   stream: MediaStream;
   stop: () => void;
 }
+
+type Landmark = {
+  x: number;
+  y: number;
+  z?: number;
+};
+
+type TrackedFace = {
+  score: number;
+  landmarks: Landmark[];
+};
 
 type FacePose = {
   cx: number;
@@ -15,30 +24,60 @@ type FacePose = {
   rotation: number;
 };
 
-const WASM_URL =
-  'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@1.1.1/wasm';
+type FacemeshApi = {
+  detect: (source: HTMLVideoElement) => Promise<TrackedFace[]>;
+  reset: () => void;
+  dispose: () => void;
+};
 
-const MODEL_URL =
-  'https://storage.googleapis.com/mediapipe-models/face_detector/blaze_face_short_range/float16/1/blaze_face_short_range.tflite';
+type MicroFacemeshModule = {
+  createFacemesh: (options?: {
+    weightsUrl?: string;
+    scoreThreshold?: number;
+    faceScoreThreshold?: number;
+    maxFaces?: number;
+  }) => Promise<FacemeshApi>;
+};
 
-let detectorPromise: Promise<FaceDetector> | undefined;
+const MICRO_FACEMESH_MODULE =
+  'https://cdn.jsdelivr.net/npm/@svenflow/micro-facemesh@0.1.2/+esm';
 
-async function getFaceDetector(): Promise<FaceDetector> {
-  if (!detectorPromise) {
-    detectorPromise = (async () => {
-      const vision = await FilesetResolver.forVisionTasks(WASM_URL);
-      return FaceDetector.createFromOptions(vision, {
-        baseOptions: {
-          modelAssetPath: MODEL_URL,
-          delegate: 'CPU',
-        },
-        runningMode: 'VIDEO',
-        minDetectionConfidence: 0.5,
-        minSuppressionThreshold: 0.3,
+const MICRO_FACEMESH_WEIGHTS =
+  'https://cdn.jsdelivr.net/npm/@svenflow/micro-facemesh@0.1.2/weights';
+
+const LEFT_EYE_OUTER = 33;
+const RIGHT_EYE_OUTER = 263;
+
+let facemeshPromise: Promise<FacemeshApi> | undefined;
+
+function hasWebGpu(): boolean {
+  return Boolean((navigator as Navigator & { gpu?: unknown }).gpu);
+}
+
+async function getFacemesh(): Promise<FacemeshApi> {
+  if (!hasWebGpu()) {
+    throw new Error(
+      '복면 모드는 WebGPU가 필요합니다. Chrome/Edge 113+ 또는 Safari 18+에서 실행해주세요.',
+    );
+  }
+
+  if (!facemeshPromise) {
+    facemeshPromise = (async () => {
+      const moduleUrl = MICRO_FACEMESH_MODULE;
+      const mod = (await import(
+        /* @vite-ignore */ moduleUrl
+      )) as MicroFacemeshModule;
+
+      return mod.createFacemesh({
+        weightsUrl: MICRO_FACEMESH_WEIGHTS,
+        scoreThreshold: 0.5,
+        faceScoreThreshold: 0.5,
+        maxFaces: 1,
       });
     })();
   }
-  return detectorPromise;
+
+  return facemeshPromise;
 }
 
 function waitForVideoReady(video: HTMLVideoElement): Promise<void> {
@@ -50,7 +89,7 @@ function waitForVideoReady(video: HTMLVideoElement): Promise<void> {
     const timeout = window.setTimeout(() => {
       cleanup();
       reject(new Error('카메라 영상 초기화 시간이 초과되었습니다.'));
-    }, 8000);
+    }, 10000);
 
     const onReady = () => {
       if (video.videoWidth <= 0 || video.videoHeight <= 0) return;
@@ -76,32 +115,85 @@ function waitForVideoReady(video: HTMLVideoElement): Promise<void> {
   });
 }
 
-function smoothPose(current: FacePose | undefined, next: FacePose): FacePose {
-  if (!current) return next;
+function normalizeRoll(angle: number): number {
+  let value = angle;
 
-  // Responsive enough to avoid face exposure while still removing jitter.
-  const a = 0.58;
+  while (value > Math.PI / 2) value -= Math.PI;
+  while (value < -Math.PI / 2) value += Math.PI;
+
+  return value;
+}
+
+function poseFromLandmarks(
+  face: TrackedFace,
+  outputWidth: number,
+  outputHeight: number,
+): FacePose | undefined {
+  const landmarks = face.landmarks;
+
+  if (!landmarks || landmarks.length < 264) {
+    return undefined;
+  }
+
+  let minX = Number.POSITIVE_INFINITY;
+  let minY = Number.POSITIVE_INFINITY;
+  let maxX = Number.NEGATIVE_INFINITY;
+  let maxY = Number.NEGATIVE_INFINITY;
+
+  for (const point of landmarks) {
+    if (!Number.isFinite(point.x) || !Number.isFinite(point.y)) continue;
+
+    minX = Math.min(minX, point.x);
+    minY = Math.min(minY, point.y);
+    maxX = Math.max(maxX, point.x);
+    maxY = Math.max(maxY, point.y);
+  }
+
+  if (
+    !Number.isFinite(minX) ||
+    !Number.isFinite(minY) ||
+    !Number.isFinite(maxX) ||
+    !Number.isFinite(maxY) ||
+    maxX <= minX ||
+    maxY <= minY
+  ) {
+    return undefined;
+  }
+
+  const leftEye = landmarks[LEFT_EYE_OUTER];
+  const rightEye = landmarks[RIGHT_EYE_OUTER];
+
+  let rotation = 0;
+
+  if (leftEye && rightEye) {
+    rotation = normalizeRoll(
+      Math.atan2(
+        (rightEye.y - leftEye.y) * outputHeight,
+        (rightEye.x - leftEye.x) * outputWidth,
+      ),
+    );
+  }
+
   return {
-    cx: current.cx + (next.cx - current.cx) * a,
-    cy: current.cy + (next.cy - current.cy) * a,
-    width: current.width + (next.width - current.width) * a,
-    height: current.height + (next.height - current.height) * a,
-    rotation: current.rotation + (next.rotation - current.rotation) * a,
+    cx: ((minX + maxX) / 2) * outputWidth,
+    cy: ((minY + maxY) / 2) * outputHeight,
+    width: (maxX - minX) * outputWidth,
+    height: (maxY - minY) * outputHeight,
+    rotation,
   };
 }
 
 function drawPaperMask(ctx: CanvasRenderingContext2D, pose: FacePose) {
-  const width = pose.width * 1.58;
-  const height = pose.height * 1.78;
+  const width = pose.width * 1.30;
+  const height = pose.height * 1.38;
 
   ctx.save();
-  ctx.translate(pose.cx, pose.cy + pose.height * 0.02);
+  ctx.translate(pose.cx, pose.cy - pose.height * 0.015);
   ctx.rotate(pose.rotation);
 
-  // Soft shadow makes the mask visually read as a physical paper mask.
-  ctx.shadowColor = 'rgba(0, 0, 0, 0.34)';
-  ctx.shadowBlur = Math.max(8, width * 0.05);
-  ctx.shadowOffsetY = Math.max(3, height * 0.025);
+  ctx.shadowColor = 'rgba(0, 0, 0, 0.30)';
+  ctx.shadowBlur = Math.max(6, width * 0.035);
+  ctx.shadowOffsetY = Math.max(2, height * 0.018);
 
   ctx.beginPath();
   ctx.ellipse(0, 0, width / 2, height / 2, 0, 0, Math.PI * 2);
@@ -109,86 +201,67 @@ function drawPaperMask(ctx: CanvasRenderingContext2D, pose: FacePose) {
   ctx.fill();
 
   ctx.shadowColor = 'transparent';
-  ctx.lineWidth = Math.max(2, width * 0.012);
-  ctx.strokeStyle = 'rgba(54, 49, 43, 0.78)';
+  ctx.lineWidth = Math.max(2, width * 0.010);
+  ctx.strokeStyle = 'rgba(54, 49, 43, 0.76)';
   ctx.stroke();
 
-  // Paper fold.
   ctx.beginPath();
   ctx.moveTo(0, -height * 0.43);
   ctx.lineTo(0, height * 0.43);
-  ctx.strokeStyle = 'rgba(116, 103, 86, 0.20)';
-  ctx.lineWidth = Math.max(1, width * 0.006);
+  ctx.strokeStyle = 'rgba(116, 103, 86, 0.18)';
+  ctx.lineWidth = Math.max(1, width * 0.005);
   ctx.stroke();
 
-  // Printed eye marks; these are opaque, not holes.
   ctx.fillStyle = '#191919';
   const eyeY = -height * 0.10;
-  const eyeW = width * 0.18;
-  const eyeH = height * 0.055;
 
   ctx.beginPath();
-  ctx.ellipse(-width * 0.19, eyeY, eyeW / 2, eyeH / 2, -0.08, 0, Math.PI * 2);
+  ctx.ellipse(
+    -width * 0.19,
+    eyeY,
+    width * 0.085,
+    height * 0.027,
+    -0.06,
+    0,
+    Math.PI * 2,
+  );
   ctx.fill();
 
   ctx.beginPath();
-  ctx.ellipse(width * 0.19, eyeY, eyeW / 2, eyeH / 2, 0.08, 0, Math.PI * 2);
+  ctx.ellipse(
+    width * 0.19,
+    eyeY,
+    width * 0.085,
+    height * 0.027,
+    0.06,
+    0,
+    Math.PI * 2,
+  );
   ctx.fill();
 
-  // Minimal printed nose and mouth.
   ctx.beginPath();
   ctx.moveTo(0, -height * 0.015);
-  ctx.lineTo(-width * 0.03, height * 0.10);
-  ctx.lineTo(width * 0.025, height * 0.10);
-  ctx.strokeStyle = 'rgba(35, 35, 35, 0.65)';
-  ctx.lineWidth = Math.max(1.5, width * 0.009);
+  ctx.lineTo(-width * 0.025, height * 0.10);
+  ctx.lineTo(width * 0.022, height * 0.10);
+  ctx.strokeStyle = 'rgba(35, 35, 35, 0.62)';
+  ctx.lineWidth = Math.max(1.5, width * 0.007);
   ctx.stroke();
 
   ctx.beginPath();
-  ctx.moveTo(-width * 0.13, height * 0.24);
-  ctx.quadraticCurveTo(0, height * 0.28, width * 0.13, height * 0.24);
+  ctx.moveTo(-width * 0.12, height * 0.23);
+  ctx.quadraticCurveTo(0, height * 0.27, width * 0.12, height * 0.23);
   ctx.strokeStyle = '#242424';
-  ctx.lineWidth = Math.max(2, width * 0.011);
+  ctx.lineWidth = Math.max(2, width * 0.009);
   ctx.stroke();
 
-  // Tiny string marks enhance the physical-mask impression.
   ctx.beginPath();
-  ctx.moveTo(-width * 0.49, -height * 0.03);
-  ctx.lineTo(-width * 0.61, -height * 0.01);
-  ctx.moveTo(width * 0.49, -height * 0.03);
-  ctx.lineTo(width * 0.61, -height * 0.01);
-  ctx.strokeStyle = 'rgba(240, 240, 235, 0.9)';
-  ctx.lineWidth = Math.max(2, width * 0.010);
+  ctx.moveTo(-width * 0.49, -height * 0.02);
+  ctx.lineTo(-width * 0.60, 0);
+  ctx.moveTo(width * 0.49, -height * 0.02);
+  ctx.lineTo(width * 0.60, 0);
+  ctx.strokeStyle = 'rgba(240, 240, 235, 0.90)';
+  ctx.lineWidth = Math.max(2, width * 0.008);
   ctx.stroke();
-
-  ctx.restore();
-}
-
-function drawPrivacyFallback(
-  ctx: CanvasRenderingContext2D,
-  width: number,
-  height: number,
-) {
-  // Never leak an unmasked face before initial detection or after tracking loss.
-  ctx.save();
-  ctx.fillStyle = 'rgba(13, 17, 19, 0.96)';
-  ctx.fillRect(0, 0, width, height);
-
-  const size = Math.min(width, height) * 0.34;
-  ctx.translate(width / 2, height / 2);
-  ctx.beginPath();
-  ctx.ellipse(0, 0, size * 0.62, size * 0.82, 0, 0, Math.PI * 2);
-  ctx.fillStyle = '#eee9dc';
-  ctx.fill();
-  ctx.strokeStyle = 'rgba(255,255,255,0.3)';
-  ctx.lineWidth = Math.max(2, size * 0.018);
-  ctx.stroke();
-
-  ctx.fillStyle = '#171717';
-  ctx.beginPath();
-  ctx.ellipse(-size * 0.20, -size * 0.08, size * 0.11, size * 0.035, 0, 0, Math.PI * 2);
-  ctx.ellipse(size * 0.20, -size * 0.08, size * 0.11, size * 0.035, 0, 0, Math.PI * 2);
-  ctx.fill();
 
   ctx.restore();
 }
@@ -197,6 +270,7 @@ export async function createMaskedCameraStream(
   source: MediaStream,
 ): Promise<MaskedCameraController> {
   const sourceVideoTrack = source.getVideoTracks()[0];
+
   if (!sourceVideoTrack) {
     throw new Error('복면 모드에 사용할 카메라 트랙이 없습니다.');
   }
@@ -205,7 +279,9 @@ export async function createMaskedCameraStream(
     throw new Error('현재 브라우저는 복면 영상 출력을 지원하지 않습니다.');
   }
 
-  const detector = await getFaceDetector();
+  const facemesh = await getFacemesh();
+
+  facemesh.reset();
 
   const video = document.createElement('video');
   video.autoplay = true;
@@ -219,10 +295,9 @@ export async function createMaskedCameraStream(
   const sourceWidth = video.videoWidth || 1280;
   const sourceHeight = video.videoHeight || 720;
 
-  // Keep mask mode deliberately light for phones.
-  const scale = Math.min(1, 640 / sourceWidth, 480 / sourceHeight);
-  const outputWidth = Math.max(240, Math.round(sourceWidth * scale));
-  const outputHeight = Math.max(180, Math.round(sourceHeight * scale));
+  const scale = Math.min(1, 1280 / sourceWidth, 720 / sourceHeight);
+  const outputWidth = Math.max(320, Math.round(sourceWidth * scale));
+  const outputHeight = Math.max(240, Math.round(sourceHeight * scale));
 
   const canvas = document.createElement('canvas');
   canvas.width = outputWidth;
@@ -239,6 +314,7 @@ export async function createMaskedCameraStream(
 
   const canvasStream = canvas.captureStream(30);
   const maskedVideoTrack = canvasStream.getVideoTracks()[0];
+
   if (!maskedVideoTrack) {
     throw new Error('복면 영상 트랙을 만들지 못했습니다.');
   }
@@ -252,68 +328,60 @@ export async function createMaskedCameraStream(
 
   let stopped = false;
   let raf = 0;
-  let lastDetectAt = 0;
-  let lastFaceAt = 0;
-  let face: FacePose | undefined;
+  let detecting = false;
+  let lastTrackAt = 0;
+  let face: TrackedFace | undefined;
 
-  const sx = outputWidth / sourceWidth;
-  const sy = outputHeight / sourceHeight;
+  const detect = async (now: number) => {
+    if (
+      stopped ||
+      detecting ||
+      now - lastTrackAt < 30 ||
+      video.readyState < 2 ||
+      video.videoWidth <= 0 ||
+      video.videoHeight <= 0
+    ) {
+      return;
+    }
+
+    detecting = true;
+    lastTrackAt = now;
+
+    try {
+      // micro-facemesh owns the tracking pipeline:
+      // first frame / tracking loss -> BlazeFace full detection
+      // tracked frames -> previous 478 landmarks -> next ROI -> landmark inference
+      const faces = await facemesh.detect(video);
+      face = faces[0];
+    } catch (error) {
+      console.warn('[mask] micro-facemesh tracking failed', error);
+      face = undefined;
+    } finally {
+      detecting = false;
+    }
+  };
 
   const render = (now: number) => {
     if (stopped) return;
 
     ctx.drawImage(video, 0, 0, outputWidth, outputHeight);
 
-    // About 11 detections/sec. Rendering still runs at browser frame rate.
-    if (video.readyState >= 2 && now - lastDetectAt >= 90) {
-      lastDetectAt = now;
+    if (face && face.score >= 0.1) {
+      const pose = poseFromLandmarks(face, outputWidth, outputHeight);
 
-      try {
-        const result = detector.detectForVideo(video, now);
-        const detection = result.detections?.[0];
-        const box = detection?.boundingBox;
-
-        if (box && box.width > 0 && box.height > 0) {
-          let rotation = 0;
-          const keypoints = detection.keypoints ?? [];
-
-          // BlazeFace normally exposes the two eyes first.
-          if (keypoints.length >= 2) {
-            const left = keypoints[0];
-            const right = keypoints[1];
-            rotation = Math.atan2(
-              (right.y - left.y) * outputHeight,
-              (right.x - left.x) * outputWidth,
-            );
-          }
-
-          const next: FacePose = {
-            cx: (box.originX + box.width / 2) * sx,
-            cy: (box.originY + box.height / 2) * sy,
-            width: box.width * sx,
-            height: box.height * sy,
-            rotation,
-          };
-
-          face = smoothPose(face, next);
-          lastFaceAt = now;
-        }
-      } catch {
-        // Keep the last valid pose. Fallback below prevents raw-face leakage.
+      if (pose) {
+        drawPaperMask(ctx, pose);
       }
     }
 
-    if (face && now - lastFaceAt <= 850) {
-      drawPaperMask(ctx, face);
-    } else {
-      drawPrivacyFallback(ctx, outputWidth, outputHeight);
-    }
+    void detect(now);
 
     raf = requestAnimationFrame(render);
   };
 
   const stop = () => {
     if (stopped) return;
+
     stopped = true;
 
     if (raf) cancelAnimationFrame(raf);
@@ -328,6 +396,12 @@ export async function createMaskedCameraStream(
     canvasStream.getTracks().forEach((track) => {
       if (track.readyState !== 'ended') track.stop();
     });
+
+    try {
+      facemesh.reset();
+    } catch {
+      // Camera switching must not be blocked by tracker cleanup.
+    }
   };
 
   maskedVideoTrack.addEventListener('ended', stop, { once: true });
