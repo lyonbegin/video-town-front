@@ -1,10 +1,5 @@
 export type CameraMode = 'mask' | 'original';
 
-export interface MaskedCameraController {
-  stream: MediaStream;
-  stop: () => void;
-}
-
 export interface MaskTuning {
   // Extra display-stage One Euro filter that we apply after MindAR.
   postMinCutoff: number;
@@ -13,6 +8,24 @@ export interface MaskTuning {
   // MindAR's own built-in One Euro filter.
   mindarMinCutoff: number;
   mindarBeta: number;
+}
+
+export interface CalibrationResult {
+  tuning: MaskTuning;
+  score: number;
+  trackingError: number;
+  motionError: number;
+  stationaryJitter: number;
+  sampleCount: number;
+  durationMs: number;
+}
+
+export interface MaskedCameraController {
+  stream: MediaStream;
+  stop: () => void;
+  startCalibration: () => void;
+  finishCalibration: () => CalibrationResult;
+  getCalibrationSampleCount: () => number;
 }
 
 export const DEFAULT_MASK_TUNING: MaskTuning = {
@@ -26,6 +39,23 @@ type MindAREstimate = {
   metricLandmarks: number[][];
   faceMatrix: number[];
   faceScale: number;
+};
+
+type FaceMeshLike = {
+  visible: boolean;
+  material: {
+    map?: unknown;
+    transparent?: boolean;
+    needsUpdate?: boolean;
+  };
+  geometry: {
+    attributes: {
+      position: {
+        array: Float32Array;
+        needsUpdate: boolean;
+      };
+    };
+  };
 };
 
 type MindARThreeInstance = {
@@ -42,22 +72,7 @@ type MindARThreeInstance = {
   };
   camera: unknown;
   video?: HTMLVideoElement;
-  addFaceMesh: () => {
-    visible: boolean;
-    material: {
-      map?: unknown;
-      transparent?: boolean;
-      needsUpdate?: boolean;
-    };
-    geometry: {
-      attributes: {
-        position: {
-          array: Float32Array;
-          needsUpdate: boolean;
-        };
-      };
-    };
-  };
+  addFaceMesh: () => FaceMeshLike;
   getLatestEstimate: () => MindAREstimate | null;
   start: () => Promise<void>;
   stop: () => void;
@@ -85,6 +100,19 @@ type ThreeModule = {
   };
 };
 
+type CalibrationSample = {
+  t: number;
+  values: Float32Array;
+  scale: number;
+};
+
+type CalibrationMetrics = {
+  score: number;
+  trackingError: number;
+  motionError: number;
+  stationaryJitter: number;
+};
+
 const MINDAR_SPECIFIER = 'mindar-face-three';
 const THREE_SPECIFIER = 'three';
 
@@ -93,6 +121,40 @@ const FACE_TEXTURE_URL =
 
 const FACE_VERTEX_COUNT = 468;
 const FACE_LOSS_GRACE_MS = 420;
+
+// Stable facial points used for calibration replay. We intentionally avoid most
+// lip/eyelid points because expression motion should not be scored as jitter.
+const CALIBRATION_LANDMARKS = [
+  1, 4, 5, 10, 21, 33, 54, 67, 93, 127, 133, 152,
+  162, 168, 197, 234, 263, 284, 297, 323, 356, 362, 389, 454,
+];
+
+const CALIBRATION_MIN_CANDIDATES = [
+  0.00015,
+  0.00025,
+  0.0004,
+  0.00055,
+  0.0007,
+  0.001,
+  0.0015,
+  0.0025,
+  0.004,
+];
+
+const CALIBRATION_BETA_CANDIDATES = [
+  0,
+  0.5,
+  1,
+  1.5,
+  2,
+  3,
+  4,
+  6,
+  8,
+  12,
+];
+
+const MAX_CALIBRATION_SAMPLES = 900;
 
 // This is the same One Euro implementation used by MindAR:
 // src/libs/one-euro-filter.js. MindAR uses timestamps in milliseconds and
@@ -187,6 +249,324 @@ function sanitizeTuning(tuning?: Partial<MaskTuning>): MaskTuning {
       DEFAULT_MASK_TUNING.mindarBeta,
     ),
   };
+}
+
+function rmsDiff(a: Float32Array, b: Float32Array) {
+  let sum = 0;
+
+  for (let i = 0; i < a.length; i++) {
+    const d = a[i] - b[i];
+    sum += d * d;
+  }
+
+  return Math.sqrt(sum / Math.max(1, a.length));
+}
+
+function rmsDeltaMismatch(
+  currentA: Float32Array,
+  previousA: Float32Array,
+  currentB: Float32Array,
+  previousB: Float32Array,
+) {
+  let sum = 0;
+
+  for (let i = 0; i < currentA.length; i++) {
+    const da = currentA[i] - previousA[i];
+    const db = currentB[i] - previousB[i];
+    const d = da - db;
+    sum += d * d;
+  }
+
+  return Math.sqrt(sum / Math.max(1, currentA.length));
+}
+
+function rmsDelta(current: Float32Array, previous: Float32Array) {
+  let sum = 0;
+
+  for (let i = 0; i < current.length; i++) {
+    const d = current[i] - previous[i];
+    sum += d * d;
+  }
+
+  return Math.sqrt(sum / Math.max(1, current.length));
+}
+
+function percentile(values: number[], p: number) {
+  if (values.length === 0) return 0;
+
+  const sorted = [...values].sort((a, b) => a - b);
+  const index = Math.min(
+    sorted.length - 1,
+    Math.max(0, Math.round((sorted.length - 1) * p)),
+  );
+
+  return sorted[index];
+}
+
+function evaluateCalibration(
+  samples: CalibrationSample[],
+  tuning: MaskTuning,
+): CalibrationMetrics {
+  const mindarFilter = new MindAROneEuroFilter(
+    tuning.mindarMinCutoff,
+    tuning.mindarBeta,
+  );
+
+  const postFilter = new MindAROneEuroFilter(
+    tuning.postMinCutoff,
+    tuning.postBeta,
+  );
+
+  const rawMotion: number[] = [];
+
+  for (let i = 1; i < samples.length; i++) {
+    rawMotion.push(
+      rmsDelta(samples[i].values, samples[i - 1].values) /
+        Math.max(1e-6, samples[i].scale),
+    );
+  }
+
+  // The quietest portion of the recording becomes the user's own measured
+  // stationary-noise baseline. This avoids hard-coding a camera-specific pixel
+  // or landmark threshold.
+  const stationaryThreshold = Math.max(
+    1e-6,
+    percentile(rawMotion, 0.35) * 1.6,
+  );
+
+  let trackingSum = 0;
+  let motionSum = 0;
+  let jitterSum = 0;
+  let trackingCount = 0;
+  let motionCount = 0;
+  let stationaryCount = 0;
+
+  let previousRaw: Float32Array | undefined;
+  let previousOutput: Float32Array | undefined;
+
+  for (const sample of samples) {
+    const mindarFiltered = mindarFilter.filter(
+      sample.t,
+      sample.values,
+    );
+
+    const output = postFilter.filter(
+      sample.t,
+      mindarFiltered,
+    );
+
+    const scale = Math.max(1e-6, sample.scale);
+
+    trackingSum += rmsDiff(output, sample.values) / scale;
+    trackingCount++;
+
+    if (previousRaw && previousOutput) {
+      const rawStep = rmsDelta(sample.values, previousRaw) / scale;
+
+      motionSum +=
+        rmsDeltaMismatch(
+          output,
+          previousOutput,
+          sample.values,
+          previousRaw,
+        ) / scale;
+      motionCount++;
+
+      if (rawStep <= stationaryThreshold) {
+        jitterSum += rmsDelta(output, previousOutput) / scale;
+        stationaryCount++;
+      }
+    }
+
+    previousRaw = sample.values;
+    previousOutput = output;
+  }
+
+  const trackingError = trackingSum / Math.max(1, trackingCount);
+  const motionError = motionSum / Math.max(1, motionCount);
+  const stationaryJitter =
+    jitterSum / Math.max(1, stationaryCount);
+
+  // Tracking error prevents "freeze the mask" from winning.
+  // Motion error penalizes latency/oversmoothing during deliberate motion.
+  // Stationary jitter gets the strongest weight because that is the visible
+  // micro-shake we are trying to eliminate.
+  const score =
+    trackingError * 0.55 +
+    motionError * 0.35 +
+    stationaryJitter * 0.85;
+
+  return {
+    score,
+    trackingError,
+    motionError,
+    stationaryJitter,
+  };
+}
+
+function uniqueCandidates(base: number, values: number[]) {
+  return Array.from(new Set([base, ...values]))
+    .filter((value) => Number.isFinite(value) && value >= 0)
+    .sort((a, b) => a - b);
+}
+
+function optimizeCalibration(
+  samples: CalibrationSample[],
+  initialTuning: MaskTuning,
+): {
+  tuning: MaskTuning;
+  metrics: CalibrationMetrics;
+} {
+  let bestTuning = sanitizeTuning(initialTuning);
+  let bestMetrics = evaluateCalibration(samples, bestTuning);
+
+  const seedTunings: MaskTuning[] = [
+    bestTuning,
+    DEFAULT_MASK_TUNING,
+    {
+      mindarMinCutoff: 0.0004,
+      mindarBeta: 2,
+      postMinCutoff: 0.0004,
+      postBeta: 2,
+    },
+    {
+      mindarMinCutoff: 0.0007,
+      mindarBeta: 4,
+      postMinCutoff: 0.0007,
+      postBeta: 4,
+    },
+    {
+      mindarMinCutoff: 0.001,
+      mindarBeta: 6,
+      postMinCutoff: 0.001,
+      postBeta: 6,
+    },
+  ];
+
+  for (const seed of seedTunings) {
+    const sanitized = sanitizeTuning(seed);
+    const metrics = evaluateCalibration(samples, sanitized);
+
+    if (metrics.score < bestMetrics.score) {
+      bestTuning = sanitized;
+      bestMetrics = metrics;
+    }
+  }
+
+  const minCandidates = () =>
+    uniqueCandidates(
+      Math.min(bestTuning.mindarMinCutoff, bestTuning.postMinCutoff),
+      CALIBRATION_MIN_CANDIDATES,
+    );
+
+  const betaCandidates = () =>
+    uniqueCandidates(
+      Math.max(bestTuning.mindarBeta, bestTuning.postBeta),
+      CALIBRATION_BETA_CANDIDATES,
+    );
+
+  const tryParameter = (
+    key: keyof MaskTuning,
+    candidates: number[],
+  ) => {
+    for (const candidate of candidates) {
+      if (
+        (key === 'mindarMinCutoff' || key === 'postMinCutoff') &&
+        candidate <= 0
+      ) {
+        continue;
+      }
+
+      const tuning = {
+        ...bestTuning,
+        [key]: candidate,
+      };
+
+      const metrics = evaluateCalibration(samples, tuning);
+
+      if (metrics.score < bestMetrics.score) {
+        bestTuning = tuning;
+        bestMetrics = metrics;
+      }
+    }
+  };
+
+  // Coordinate descent over the four parameters. Repeating the pass lets the
+  // second stage settle after the first stage has moved.
+  for (let pass = 0; pass < 3; pass++) {
+    tryParameter(
+      'mindarMinCutoff',
+      uniqueCandidates(
+        bestTuning.mindarMinCutoff,
+        minCandidates(),
+      ),
+    );
+    tryParameter(
+      'mindarBeta',
+      uniqueCandidates(
+        bestTuning.mindarBeta,
+        betaCandidates(),
+      ),
+    );
+    tryParameter(
+      'postMinCutoff',
+      uniqueCandidates(
+        bestTuning.postMinCutoff,
+        minCandidates(),
+      ),
+    );
+    tryParameter(
+      'postBeta',
+      uniqueCandidates(
+        bestTuning.postBeta,
+        betaCandidates(),
+      ),
+    );
+  }
+
+  return {
+    tuning: bestTuning,
+    metrics: bestMetrics,
+  };
+}
+
+function faceScaleFromRawPositions(raw: Float32Array) {
+  const distance = (a: number, b: number) => {
+    const ax = raw[a * 3];
+    const ay = raw[a * 3 + 1];
+    const az = raw[a * 3 + 2];
+
+    const bx = raw[b * 3];
+    const by = raw[b * 3 + 1];
+    const bz = raw[b * 3 + 2];
+
+    return Math.hypot(
+      bx - ax,
+      by - ay,
+      bz - az,
+    );
+  };
+
+  const width = distance(234, 454);
+  const height = distance(10, 152);
+
+  return Math.max(1e-6, (width + height) * 0.5);
+}
+
+function extractCalibrationValues(raw: Float32Array) {
+  const values = new Float32Array(CALIBRATION_LANDMARKS.length * 3);
+
+  for (let i = 0; i < CALIBRATION_LANDMARKS.length; i++) {
+    const landmarkIndex = CALIBRATION_LANDMARKS[i];
+    const src = landmarkIndex * 3;
+    const dst = i * 3;
+
+    values[dst] = raw[src];
+    values[dst + 1] = raw[src + 1];
+    values[dst + 2] = raw[src + 2];
+  }
+
+  return values;
 }
 
 async function loadOfficialMindARModules() {
@@ -333,6 +713,33 @@ export async function createMaskedCameraStream(
     let lastSeenAt = 0;
     let everSeenFace = false;
 
+    let calibrationRecording = false;
+    let calibrationStartedAt = 0;
+    let calibrationLastEstimate: MindAREstimate | null = null;
+    let calibrationSamples: CalibrationSample[] = [];
+
+    const captureCalibrationSample = (
+      now: number,
+      estimate: MindAREstimate,
+    ) => {
+      if (!calibrationRecording) return;
+      if (estimate === calibrationLastEstimate) return;
+      if (calibrationSamples.length >= MAX_CALIBRATION_SAMPLES) return;
+
+      calibrationLastEstimate = estimate;
+
+      // MindAR writes the unfiltered estimateResult.metricLandmarks to the
+      // FaceGeometry after onUpdate. Read that geometry before our post filter
+      // overwrites it. This gives calibration a replayable raw signal.
+      const raw = faceMesh.geometry.attributes.position.array;
+
+      calibrationSamples.push({
+        t: now - calibrationStartedAt,
+        values: extractCalibrationValues(raw),
+        scale: faceScaleFromRawPositions(raw),
+      });
+    };
+
     const applyPostFilter = (
       metricLandmarks: number[][],
       now: number,
@@ -364,6 +771,8 @@ export async function createMaskedCameraStream(
         lastSeenAt = now;
         everSeenFace = true;
         faceMesh.visible = true;
+
+        captureCalibrationSample(now, estimate);
 
         // Layer 1: MindAR internal One Euro.
         // Layer 2: separately tunable display-stage One Euro.
@@ -398,9 +807,49 @@ export async function createMaskedCameraStream(
       );
     });
 
+    const startCalibration = () => {
+      calibrationSamples = [];
+      calibrationStartedAt = performance.now();
+      calibrationLastEstimate = mindar.getLatestEstimate();
+      calibrationRecording = true;
+    };
+
+    const finishCalibration = (): CalibrationResult => {
+      calibrationRecording = false;
+
+      if (calibrationSamples.length < 30) {
+        throw new Error(
+          '자동 캘리브레이션 데이터가 부족합니다. 최소 30프레임 이상 녹화해주세요.',
+        );
+      }
+
+      const samples = calibrationSamples;
+      const durationMs =
+        samples[samples.length - 1].t - samples[0].t;
+
+      const { tuning: bestTuning, metrics } = optimizeCalibration(
+        samples,
+        tuning,
+      );
+
+      return {
+        tuning: bestTuning,
+        score: metrics.score,
+        trackingError: metrics.trackingError,
+        motionError: metrics.motionError,
+        stationaryJitter: metrics.stationaryJitter,
+        sampleCount: samples.length,
+        durationMs,
+      };
+    };
+
+    const getCalibrationSampleCount = () =>
+      calibrationSamples.length;
+
     const stop = () => {
       if (stopped) return;
       stopped = true;
+      calibrationRecording = false;
 
       try {
         renderer.setAnimationLoop(null);
@@ -436,6 +885,9 @@ export async function createMaskedCameraStream(
     return {
       stream: outputStream,
       stop,
+      startCalibration,
+      finishCalibration,
+      getCalibrationSampleCount,
     };
   } catch (error) {
     stopped = true;
