@@ -218,3 +218,58 @@ button:disabled { cursor: not-allowed; opacity: .55; }
   .login-hero h1 { font-size: 42px; }
   .server-pill small { display: none; }
 }
+
+/* VIDEO_TOWN_MASK_MODE */
+.camera-mode-selector {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin: 18px 0;
+}
+
+.camera-mode-button {
+  min-width: 0;
+  padding: 15px 16px;
+  border: 1px solid #dce6e8;
+  border-radius: 16px;
+  background: #f8fbfb;
+  color: #43565e;
+  text-align: left;
+  display: grid;
+  gap: 5px;
+  cursor: pointer;
+  transition: border-color .15s ease, background .15s ease, transform .15s ease;
+}
+
+.camera-mode-button:hover:not(:disabled) {
+  transform: translateY(-1px);
+  border-color: #91cfc3;
+}
+
+.camera-mode-button.active {
+  border-color: #55b7a5;
+  background: #eaf8f4;
+  box-shadow: inset 0 0 0 1px rgba(85, 183, 165, .16);
+}
+
+.camera-mode-button strong {
+  font-size: 14px;
+  color: #153f48;
+}
+
+.camera-mode-button span {
+  font-size: 11px;
+  line-height: 1.45;
+  color: #728188;
+}
+
+.camera-mode-button:disabled {
+  cursor: default;
+  opacity: .62;
+}
+
+@media (max-width: 640px) {
+  .camera-mode-selector {
+    grid-template-columns: 1fr;
+  }
+}
