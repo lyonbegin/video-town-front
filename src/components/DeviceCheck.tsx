@@ -32,17 +32,11 @@ export default function DeviceCheck({
   const [micId, setMicId] = useState('');
   const [level, setLevel] = useState(0);
   const [cameraMode, setCameraMode] = useState<CameraMode>('mask');
-  const [postMinCutoff, setPostMinCutoff] = useState(
-    DEFAULT_MASK_TUNING.postMinCutoff,
+  const [minCutoff, setMinCutoff] = useState(
+    DEFAULT_MASK_TUNING.minCutoff,
   );
-  const [postBeta, setPostBeta] = useState(
-    DEFAULT_MASK_TUNING.postBeta,
-  );
-  const [mindarMinCutoff, setMindarMinCutoff] = useState(
-    DEFAULT_MASK_TUNING.mindarMinCutoff,
-  );
-  const [mindarBeta, setMindarBeta] = useState(
-    DEFAULT_MASK_TUNING.mindarBeta,
+  const [beta, setBeta] = useState(
+    DEFAULT_MASK_TUNING.beta,
   );
   const [calibrating, setCalibrating] = useState(false);
   const [calibrationStartedAt, setCalibrationStartedAt] = useState(0);
@@ -53,10 +47,8 @@ export default function DeviceCheck({
   const [calibrationMessage, setCalibrationMessage] = useState('');
 
   const currentTuning = (): MaskTuning => ({
-    postMinCutoff,
-    postBeta,
-    mindarMinCutoff,
-    mindarBeta,
+    minCutoff,
+    beta,
   });
 
   useEffect(() => {
@@ -247,10 +239,8 @@ export default function DeviceCheck({
       const result = controller.finishCalibration();
 
       setCalibrationResult(result);
-      setPostMinCutoff(result.tuning.postMinCutoff);
-      setPostBeta(result.tuning.postBeta);
-      setMindarMinCutoff(result.tuning.mindarMinCutoff);
-      setMindarBeta(result.tuning.mindarBeta);
+      setMinCutoff(result.tuning.minCutoff);
+      setBeta(result.tuning.beta);
 
       setCalibrationMessage(
         `자동 캘리브레이션 완료 · ${result.sampleCount}프레임 · ${(
@@ -258,8 +248,7 @@ export default function DeviceCheck({
         ).toFixed(1)}초 · score ${result.score.toFixed(6)}`,
       );
 
-      // Restart the MindAR pipeline once with the chosen values so both the
-      // constructor-level MindAR filter and post filter use the result.
+      // Restart the MindAR pipeline once with the chosen single filter values.
       await acquire(
         cameraId,
         micId,
@@ -383,62 +372,30 @@ export default function DeviceCheck({
 
               <div className="device-grid">
                 <label>
-                  <span>추가 One Euro · minCutOff</span>
+                  <span>MindAR One Euro · minCutOff</span>
                   <input
                     type="number"
                     min="0.00005"
                     max="0.1"
                     step="0.0001"
-                    value={postMinCutoff}
+                    value={minCutoff}
                     onChange={(e) =>
-                      setPostMinCutoff(Number(e.target.value))
+                      setMinCutoff(Number(e.target.value))
                     }
                     disabled={busy || ready}
                   />
                 </label>
 
                 <label>
-                  <span>추가 One Euro · beta</span>
+                  <span>MindAR One Euro · beta</span>
                   <input
                     type="number"
                     min="0"
                     max="30"
                     step="0.1"
-                    value={postBeta}
+                    value={beta}
                     onChange={(e) =>
-                      setPostBeta(Number(e.target.value))
-                    }
-                    disabled={busy || ready}
-                  />
-                </label>
-              </div>
-
-              <div className="device-grid">
-                <label>
-                  <span>MindAR 원본 필터 · minCutOff</span>
-                  <input
-                    type="number"
-                    min="0.00005"
-                    max="0.1"
-                    step="0.0001"
-                    value={mindarMinCutoff}
-                    onChange={(e) =>
-                      setMindarMinCutoff(Number(e.target.value))
-                    }
-                    disabled={busy || ready}
-                  />
-                </label>
-
-                <label>
-                  <span>MindAR 원본 필터 · beta</span>
-                  <input
-                    type="number"
-                    min="0"
-                    max="30"
-                    step="0.1"
-                    value={mindarBeta}
-                    onChange={(e) =>
-                      setMindarBeta(Number(e.target.value))
+                      setBeta(Number(e.target.value))
                     }
                     disabled={busy || ready}
                   />
@@ -462,16 +419,16 @@ export default function DeviceCheck({
               </button>
 
               <p className="muted-text">
-                추가 필터 기본값: minCutOff 0.0007 / beta 3.0 ·
-                MindAR 원본 기본값: minCutOff 0.001 / beta 1.0
+                실시간 보간 필터는 MindAR One Euro 하나만 사용합니다.
+                기본값: minCutOff 0.001 / beta 1.0
               </p>
 
               <div className="section-kicker">자동 캘리브레이션</div>
 
               <p className="muted-text">
                 시작 버튼부터 끝 버튼까지 실제 얼굴 landmark를 녹화한 뒤,
-                같은 녹화 데이터를 여러 필터 값으로 반복 계산해서
-                지터와 추적 오차가 가장 작은 조합을 찾습니다.
+                같은 녹화 데이터를 MindAR One Euro의 minCutOff / beta
+                조합으로 반복 계산해서 지터와 추적 오차가 가장 작은 값을 찾습니다.
               </p>
 
               <div className="camera-mode-selector">
