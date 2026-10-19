@@ -26,8 +26,20 @@ type MindARThreeInstance = {
       transparent?: boolean;
       needsUpdate?: boolean;
     };
+    geometry: {
+      attributes: {
+        position: {
+          array: Float32Array;
+          needsUpdate: boolean;
+        };
+      };
+    };
   };
-  getLatestEstimate: () => unknown | null;
+  getLatestEstimate: () => {
+    metricLandmarks: number[][];
+    faceMatrix: number[];
+    faceScale: number;
+  } | null;
   start: () => Promise<void>;
   stop: () => void;
 };
@@ -60,10 +72,16 @@ const THREE_SPECIFIER = 'three';
 const FACE_TEXTURE_URL =
   'https://cdn.jsdelivr.net/gh/hiukim/mind-ar-js@1.2.5/examples/face-tracking/assets/sparkar/face-mask.png';
 
-// Match MindAR's own FaceMesh behavior instead of layering a second filter on top.
-// These are the upstream defaults from src/face-target/controller.js.
-const MINDAR_FILTER_MIN_CF = 0.001;
-const MINDAR_FILTER_BETA = 1;
+// MindAR already uses One Euro internally. Keep that implementation, but tune it
+// for stronger idle stability and a faster response once motion is real.
+const MINDAR_FILTER_MIN_CF = 0.0007;
+const MINDAR_FILTER_BETA = 3.0;
+
+// MindAR filters metricLandmarks internally, but its FaceGeometry update path
+// writes the raw estimate into the visible mesh. We copy the filtered landmarks
+// back into the visible geometry and suppress only sub-threshold micro motion.
+const LANDMARK_DEADBAND_RATIO = 0.0007;
+const LANDMARK_DEADBAND_MIN = 0.003;
 
 // Keep the last valid mesh briefly when the detector misses a few frames.
 // This prevents blink-off/blink-on without adding motion latency.
@@ -205,6 +223,56 @@ export async function createMaskedCameraStream(
 
     let lastSeenAt = 0;
     let everSeenFace = false;
+    let haveDisplayedLandmarks = false;
+
+    const displayedLandmarks = new Float32Array(468 * 3);
+
+    const applyFilteredGeometry = (
+      metricLandmarks: number[][],
+      faceScale: number,
+    ) => {
+      if (!metricLandmarks || metricLandmarks.length < 468) return;
+
+      const position = faceMesh.geometry.attributes.position;
+      const target = position.array;
+      const deadband = Math.max(
+        LANDMARK_DEADBAND_MIN,
+        Math.abs(faceScale || 1) * LANDMARK_DEADBAND_RATIO,
+      );
+
+      if (!haveDisplayedLandmarks) {
+        for (let i = 0; i < 468; i++) {
+          const base = i * 3;
+          displayedLandmarks[base] = metricLandmarks[i][0];
+          displayedLandmarks[base + 1] = metricLandmarks[i][1];
+          displayedLandmarks[base + 2] = metricLandmarks[i][2];
+        }
+        haveDisplayedLandmarks = true;
+      } else {
+        for (let i = 0; i < 468; i++) {
+          const base = i * 3;
+
+          for (let axis = 0; axis < 3; axis++) {
+            const currentValue = displayedLandmarks[base + axis];
+            const nextValue = metricLandmarks[i][axis];
+            const delta = nextValue - currentValue;
+
+            if (Math.abs(delta) <= deadband) {
+              continue;
+            }
+
+            // Soft deadband: keep only the tiny noise band out of the motion.
+            // There is no EMA/prediction stage here, so deliberate motion
+            // remains essentially as fast as MindAR's own filtered result.
+            displayedLandmarks[base + axis] =
+              nextValue - Math.sign(delta) * deadband;
+          }
+        }
+      }
+
+      target.set(displayedLandmarks);
+      position.needsUpdate = true;
+    };
 
     renderer.setAnimationLoop((now) => {
       if (stopped) return;
@@ -215,14 +283,21 @@ export async function createMaskedCameraStream(
         lastSeenAt = now;
         everSeenFace = true;
         faceMesh.visible = true;
+
+        // This is MindAR's already One-Euro-filtered landmark set.
+        // Writing it back here fixes the upstream FaceGeometry path that
+        // otherwise uses the raw estimate and visibly jitters.
+        applyFilteredGeometry(
+          estimate.metricLandmarks,
+          estimate.faceScale,
+        );
       } else if (everSeenFace && now - lastSeenAt <= FACE_LOSS_GRACE_MS) {
-        // Hold the exact last geometry/matrix produced by MindAR.
-        // No extra interpolation or prediction is applied here.
         faceMesh.visible = true;
+      } else if (everSeenFace) {
+        faceMesh.visible = false;
+        haveDisplayedLandmarks = false;
       }
 
-      // Use MindAR's own geometry updates, pose matrix and One Euro filter
-      // exactly as the upstream ThreeJS FaceMesh demo does.
       renderer.render(scene, camera);
 
       // Compose the two official MindAR visual layers into a streamable canvas.
