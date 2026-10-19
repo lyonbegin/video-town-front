@@ -1,8 +1,3 @@
-import {
-  FacePaintRenderer,
-  type FacePaintLandmark,
-} from './FacePaintRenderer';
-
 export type CameraMode = 'mask' | 'original';
 
 export interface MaskedCameraController {
@@ -10,152 +5,90 @@ export interface MaskedCameraController {
   stop: () => void;
 }
 
-type TrackedFace = {
-  score: number;
-  landmarks: FacePaintLandmark[];
+type MindARThreeInstance = {
+  renderer: {
+    domElement: HTMLCanvasElement;
+    render: (scene: unknown, camera: unknown) => void;
+    setAnimationLoop: (
+      callback: ((time: number) => void) | null,
+    ) => void;
+    dispose?: () => void;
+  };
+  scene: {
+    add: (...objects: unknown[]) => void;
+  };
+  camera: unknown;
+  video?: HTMLVideoElement;
+  addFaceMesh: () => {
+    material: {
+      map?: unknown;
+      transparent?: boolean;
+      needsUpdate?: boolean;
+    };
+  };
+  start: () => Promise<void>;
+  stop: () => void;
 };
 
-type FacemeshApi = {
-  detect: (source: HTMLCanvasElement) => Promise<TrackedFace[]>;
-  reset: () => void;
-  dispose: () => void;
+type MindARThreeConstructor = new (options: {
+  container: HTMLElement;
+  userDeviceId?: string | null;
+}) => MindARThreeInstance;
+
+type MindARModule = {
+  MindARThree: MindARThreeConstructor;
 };
 
-type MicroFacemeshModule = {
-  createFacemesh: (options?: {
-    weightsUrl?: string;
-    scoreThreshold?: number;
-    faceScoreThreshold?: number;
-    maxFaces?: number;
-  }) => Promise<FacemeshApi>;
+type ThreeModule = {
+  HemisphereLight: new (
+    skyColor?: number,
+    groundColor?: number,
+    intensity?: number,
+  ) => unknown;
+  TextureLoader: new () => {
+    load: (url: string) => unknown;
+  };
 };
 
-type OneEuroFilterApi = {
-  filter: (value: number, timestamp?: number) => number;
-  reset: () => void;
-};
+const MINDAR_SPECIFIER = 'mindar-face-three';
+const THREE_SPECIFIER = 'three';
 
-type OneEuroFilterConstructor = new (
-  freq: number,
-  mincutoff?: number,
-  beta?: number,
-  dcutoff?: number,
-) => OneEuroFilterApi;
+const FACE_TEXTURE_URL =
+  'https://cdn.jsdelivr.net/gh/hiukim/mind-ar-js@1.2.5/examples/face-tracking/assets/canonical_face_model_uv_visualization.png';
 
-type OneEuroFilterModule = {
-  OneEuroFilter: OneEuroFilterConstructor;
-};
+async function loadOfficialMindARModules() {
+  const [mindar, three] = await Promise.all([
+    import(
+      /* @vite-ignore */ MINDAR_SPECIFIER
+    ) as Promise<MindARModule>,
+    import(
+      /* @vite-ignore */ THREE_SPECIFIER
+    ) as Promise<ThreeModule>,
+  ]);
 
-type VideoFrameMetadataLite = {
-  presentationTime?: number;
-  mediaTime?: number;
-};
-
-type VideoWithFrameCallback = HTMLVideoElement & {
-  requestVideoFrameCallback?: (
-    callback: (now: number, metadata: VideoFrameMetadataLite) => void,
-  ) => number;
-  cancelVideoFrameCallback?: (id: number) => void;
-};
-
-const MICRO_FACEMESH_MODULE =
-  'https://cdn.jsdelivr.net/npm/@svenflow/micro-facemesh@0.1.2/+esm';
-
-const MICRO_FACEMESH_WEIGHTS =
-  'https://cdn.jsdelivr.net/npm/@svenflow/micro-facemesh@0.1.2/weights';
-
-const ONE_EURO_MODULE =
-  'https://cdn.jsdelivr.net/npm/1eurofilter@1.3.0/+esm';
-
-const FACE_VERTEX_COUNT = 468;
-
-const INFERENCE_MAX_WIDTH = 512;
-const INFERENCE_MAX_HEIGHT = 288;
-
-const FILTER_FREQUENCY = 30;
-const LANDMARK_MIN_CUTOFF = 0.8;
-const LANDMARK_BETA = 12.0;
-const LANDMARK_DERIVATIVE_CUTOFF = 1.0;
-
-let facemeshPromise: Promise<FacemeshApi> | undefined;
-let oneEuroModulePromise: Promise<OneEuroFilterModule> | undefined;
-
-function hasWebGpu(): boolean {
-  return Boolean((navigator as Navigator & { gpu?: unknown }).gpu);
+  return {
+    MindARThree: mindar.MindARThree,
+    THREE: three,
+  };
 }
 
-async function getFacemesh(): Promise<FacemeshApi> {
-  if (!hasWebGpu()) {
-    throw new Error(
-      '복면 모드는 WebGPU가 필요합니다. Chrome/Edge 113+ 또는 Safari 18+에서 실행해주세요.',
-    );
-  }
+function createOffscreenContainer() {
+  const container = document.createElement('div');
 
-  if (!facemeshPromise) {
-    facemeshPromise = (async () => {
-      const moduleUrl = MICRO_FACEMESH_MODULE;
-      const mod = (await import(
-        /* @vite-ignore */ moduleUrl
-      )) as MicroFacemeshModule;
-
-      return mod.createFacemesh({
-        weightsUrl: MICRO_FACEMESH_WEIGHTS,
-        scoreThreshold: 0.5,
-        faceScoreThreshold: 0.5,
-        maxFaces: 1,
-      });
-    })();
-  }
-
-  return facemeshPromise;
-}
-
-async function getOneEuroModule(): Promise<OneEuroFilterModule> {
-  if (!oneEuroModulePromise) {
-    oneEuroModulePromise = (async () => {
-      const moduleUrl = ONE_EURO_MODULE;
-      return (await import(
-        /* @vite-ignore */ moduleUrl
-      )) as OneEuroFilterModule;
-    })();
-  }
-
-  return oneEuroModulePromise;
-}
-
-function waitForVideoReady(video: HTMLVideoElement): Promise<void> {
-  if (video.readyState >= 2 && video.videoWidth > 0 && video.videoHeight > 0) {
-    return Promise.resolve();
-  }
-
-  return new Promise((resolve, reject) => {
-    const timeout = window.setTimeout(() => {
-      cleanup();
-      reject(new Error('카메라 영상 초기화 시간이 초과되었습니다.'));
-    }, 10000);
-
-    const onReady = () => {
-      if (video.videoWidth <= 0 || video.videoHeight <= 0) return;
-      cleanup();
-      resolve();
-    };
-
-    const onError = () => {
-      cleanup();
-      reject(new Error('카메라 영상을 초기화하지 못했습니다.'));
-    };
-
-    const cleanup = () => {
-      window.clearTimeout(timeout);
-      video.removeEventListener('loadedmetadata', onReady);
-      video.removeEventListener('canplay', onReady);
-      video.removeEventListener('error', onError);
-    };
-
-    video.addEventListener('loadedmetadata', onReady);
-    video.addEventListener('canplay', onReady);
-    video.addEventListener('error', onError);
+  Object.assign(container.style, {
+    position: 'fixed',
+    left: '-10000px',
+    top: '0',
+    width: '1280px',
+    height: '720px',
+    overflow: 'hidden',
+    pointerEvents: 'none',
+    opacity: '0',
   });
+
+  document.body.appendChild(container);
+
+  return container;
 }
 
 export async function createMaskedCameraStream(
@@ -168,268 +101,172 @@ export async function createMaskedCameraStream(
   }
 
   if (!HTMLCanvasElement.prototype.captureStream) {
-    throw new Error('현재 브라우저는 복면 영상 출력을 지원하지 않습니다.');
+    throw new Error('현재 브라우저는 Canvas 영상 출력을 지원하지 않습니다.');
   }
 
-  const [facemesh, oneEuro] = await Promise.all([
-    getFacemesh(),
-    getOneEuroModule(),
-  ]);
+  const deviceId = sourceVideoTrack.getSettings().deviceId ?? null;
 
-  facemesh.reset();
+  // MindARThree owns the camera stream in the official FaceMesh module.
+  // Release the video track acquired by DeviceCheck before MindAR opens
+  // the same physical camera. Keep the existing microphone track alive.
+  sourceVideoTrack.stop();
 
-  const video = document.createElement('video');
-  video.autoplay = true;
-  video.muted = true;
-  video.playsInline = true;
-  video.srcObject = new MediaStream([sourceVideoTrack]);
+  const container = createOffscreenContainer();
 
-  await video.play().catch(() => undefined);
-  await waitForVideoReady(video);
-
-  const sourceWidth = video.videoWidth || 1280;
-  const sourceHeight = video.videoHeight || 720;
-
-  const outputScale = Math.min(1, 1280 / sourceWidth, 720 / sourceHeight);
-  const outputWidth = Math.max(320, Math.round(sourceWidth * outputScale));
-  const outputHeight = Math.max(240, Math.round(sourceHeight * outputScale));
-
-  const inferenceScale = Math.min(
-    1,
-    INFERENCE_MAX_WIDTH / sourceWidth,
-    INFERENCE_MAX_HEIGHT / sourceHeight,
-  );
-
-  const inferenceWidth = Math.max(256, Math.round(sourceWidth * inferenceScale));
-  const inferenceHeight = Math.max(
-    144,
-    Math.round(sourceHeight * inferenceScale),
-  );
-
-  const outputCanvas = document.createElement('canvas');
-  outputCanvas.width = outputWidth;
-  outputCanvas.height = outputHeight;
-
-  const renderer = new FacePaintRenderer(outputCanvas);
-
-  const inferenceCanvas = document.createElement('canvas');
-  inferenceCanvas.width = inferenceWidth;
-  inferenceCanvas.height = inferenceHeight;
-
-  const inferenceCtx = inferenceCanvas.getContext('2d', {
-    alpha: false,
-    desynchronized: true,
-  });
-
-  if (!inferenceCtx) {
-    renderer.dispose();
-    throw new Error('복면 추적용 Canvas를 만들지 못했습니다.');
-  }
-
-  const { OneEuroFilter } = oneEuro;
-
-  const filtersX = Array.from(
-    { length: FACE_VERTEX_COUNT },
-    () =>
-      new OneEuroFilter(
-        FILTER_FREQUENCY,
-        LANDMARK_MIN_CUTOFF,
-        LANDMARK_BETA,
-        LANDMARK_DERIVATIVE_CUTOFF,
-      ),
-  );
-
-  const filtersY = Array.from(
-    { length: FACE_VERTEX_COUNT },
-    () =>
-      new OneEuroFilter(
-        FILTER_FREQUENCY,
-        LANDMARK_MIN_CUTOFF,
-        LANDMARK_BETA,
-        LANDMARK_DERIVATIVE_CUTOFF,
-      ),
-  );
-
-  const resetFilters = () => {
-    for (let i = 0; i < FACE_VERTEX_COUNT; i++) {
-      filtersX[i].reset();
-      filtersY[i].reset();
-    }
-  };
-
-  const canvasStream = outputCanvas.captureStream(30);
-  const maskedVideoTrack = canvasStream.getVideoTracks()[0];
-
-  if (!maskedVideoTrack) {
-    renderer.dispose();
-    throw new Error('복면 영상 트랙을 만들지 못했습니다.');
-  }
-
-  maskedVideoTrack.contentHint = 'motion';
-
-  const output = new MediaStream([
-    maskedVideoTrack,
-    ...source.getAudioTracks(),
-  ]);
-
+  let mindarThree: MindARThreeInstance | undefined;
+  let outputCanvas: HTMLCanvasElement | undefined;
+  let outputStream: MediaStream | undefined;
   let stopped = false;
-  let renderRaf = 0;
-  let fallbackInferenceRaf = 0;
-  let videoFrameCallbackId = 0;
-  let detecting = false;
-  let lastSubmittedAt: number | undefined;
-  let hadTrackedFace = false;
-  let filteredLandmarks: FacePaintLandmark[] | undefined;
 
-  const runInference = async (submittedAt: number) => {
-    if (stopped || detecting) return;
+  try {
+    const { MindARThree, THREE } = await loadOfficialMindARModules();
 
-    detecting = true;
+    // This is the same module/API sequence as the official
+    // threejs-face-facemesh example supplied by MindAR.
+    mindarThree = new MindARThree({
+      container,
+      userDeviceId: deviceId,
+    });
 
-    // micro-facemesh returns the previous pipelined tracking result while the
-    // ROI tracker is locked. Give One Euro the measurement timestamp rather
-    // than the later render timestamp.
-    const measurementAt =
-      hadTrackedFace && lastSubmittedAt !== undefined
-        ? lastSubmittedAt
-        : submittedAt;
+    const { renderer, scene, camera } = mindarThree;
 
-    lastSubmittedAt = submittedAt;
+    const light = new THREE.HemisphereLight(0xffffff, 0xbbbbff, 1);
+    scene.add(light);
 
-    try {
-      const faces = await facemesh.detect(inferenceCanvas);
-      const face = faces[0];
+    const faceMesh = mindarThree.addFaceMesh();
 
-      if (
-        !face ||
-        face.score < 0.1 ||
-        face.landmarks.length < FACE_VERTEX_COUNT
-      ) {
-        hadTrackedFace = false;
-        filteredLandmarks = undefined;
-        resetFilters();
-        return;
-      }
+    const texture = new THREE.TextureLoader().load(FACE_TEXTURE_URL);
+    faceMesh.material.map = texture;
+    faceMesh.material.transparent = true;
+    faceMesh.material.needsUpdate = true;
 
-      hadTrackedFace = true;
+    scene.add(faceMesh);
 
-      const timestampSeconds = measurementAt / 1000;
-      const nextLandmarks = new Array<FacePaintLandmark>(FACE_VERTEX_COUNT);
+    await mindarThree.start();
 
-      for (let i = 0; i < FACE_VERTEX_COUNT; i++) {
-        const landmark = face.landmarks[i];
+    const video = mindarThree.video;
 
-        nextLandmarks[i] = {
-          x: filtersX[i].filter(landmark.x, timestampSeconds),
-          y: filtersY[i].filter(landmark.y, timestampSeconds),
-          z: landmark.z,
-        };
-      }
-
-      filteredLandmarks = nextLandmarks;
-    } catch (error) {
-      console.warn('[mask] face mesh tracking/filtering failed', error);
-      hadTrackedFace = false;
-      filteredLandmarks = undefined;
-      resetFilters();
-    } finally {
-      detecting = false;
+    if (!video || video.videoWidth <= 0 || video.videoHeight <= 0) {
+      throw new Error('MindAR FaceMesh 카메라 영상을 초기화하지 못했습니다.');
     }
-  };
 
-  const processVideoFrame = (now: number) => {
-    if (stopped || detecting || video.readyState < 2) return;
+    outputCanvas = document.createElement('canvas');
+    outputCanvas.width = video.videoWidth;
+    outputCanvas.height = video.videoHeight;
 
-    inferenceCtx.drawImage(
-      video,
-      0,
-      0,
-      inferenceWidth,
-      inferenceHeight,
-    );
+    const ctx = outputCanvas.getContext('2d', {
+      alpha: false,
+      desynchronized: true,
+    });
 
-    void runInference(now);
-  };
+    if (!ctx) {
+      throw new Error('MindAR FaceMesh 출력 Canvas를 만들지 못했습니다.');
+    }
 
-  const frameVideo = video as VideoWithFrameCallback;
+    const canvasStream = outputCanvas.captureStream(30);
+    const outputVideoTrack = canvasStream.getVideoTracks()[0];
 
-  if (frameVideo.requestVideoFrameCallback) {
-    const onVideoFrame = (now: number, _metadata: VideoFrameMetadataLite) => {
+    if (!outputVideoTrack) {
+      throw new Error('MindAR FaceMesh 출력 영상 트랙을 만들지 못했습니다.');
+    }
+
+    outputVideoTrack.contentHint = 'motion';
+
+    outputStream = new MediaStream([
+      outputVideoTrack,
+      ...source.getAudioTracks(),
+    ]);
+
+    renderer.setAnimationLoop(() => {
       if (stopped) return;
 
-      processVideoFrame(now);
+      // Official MindAR render loop.
+      renderer.render(scene, camera);
 
-      videoFrameCallbackId =
-        frameVideo.requestVideoFrameCallback!(onVideoFrame);
-    };
+      // MindAR displays the front camera mirrored with CSS while the ThreeJS
+      // overlay is already computed in that mirrored tracking coordinate space.
+      // For WebRTC capture, compose those two official layers into one canvas.
+      ctx.save();
+      ctx.translate(outputCanvas!.width, 0);
+      ctx.scale(-1, 1);
+      ctx.drawImage(
+        video,
+        0,
+        0,
+        outputCanvas!.width,
+        outputCanvas!.height,
+      );
+      ctx.restore();
 
-    videoFrameCallbackId =
-      frameVideo.requestVideoFrameCallback(onVideoFrame);
-  } else {
-    let lastFallbackInferenceAt = 0;
+      ctx.drawImage(
+        renderer.domElement,
+        0,
+        0,
+        outputCanvas!.width,
+        outputCanvas!.height,
+      );
+    });
 
-    const fallbackInference = (now: number) => {
+    const stop = () => {
       if (stopped) return;
+      stopped = true;
 
-      if (now - lastFallbackInferenceAt >= 30) {
-        lastFallbackInferenceAt = now;
-        processVideoFrame(now);
+      try {
+        renderer.setAnimationLoop(null);
+      } catch {
+        // no-op
       }
 
-      fallbackInferenceRaf = requestAnimationFrame(fallbackInference);
+      try {
+        mindarThree?.stop();
+      } catch {
+        // no-op
+      }
+
+      outputStream?.getVideoTracks().forEach((track) => {
+        if (track.readyState !== 'ended') track.stop();
+      });
+
+      source.getAudioTracks().forEach((track) => {
+        if (track.readyState !== 'ended') track.stop();
+      });
+
+      try {
+        renderer.dispose?.();
+      } catch {
+        // no-op
+      }
+
+      container.remove();
     };
 
-    fallbackInferenceRaf = requestAnimationFrame(fallbackInference);
-  }
+    outputVideoTrack.addEventListener('ended', stop, { once: true });
 
-  const render = () => {
-    if (stopped) return;
-
-    renderer.render(video, filteredLandmarks);
-
-    renderRaf = requestAnimationFrame(render);
-  };
-
-  const stop = () => {
-    if (stopped) return;
-
+    return {
+      stream: outputStream,
+      stop,
+    };
+  } catch (error) {
     stopped = true;
 
-    if (renderRaf) cancelAnimationFrame(renderRaf);
-    if (fallbackInferenceRaf) cancelAnimationFrame(fallbackInferenceRaf);
-
-    if (videoFrameCallbackId && frameVideo.cancelVideoFrameCallback) {
-      frameVideo.cancelVideoFrameCallback(videoFrameCallbackId);
+    try {
+      mindarThree?.renderer.setAnimationLoop(null);
+    } catch {
+      // no-op
     }
-
-    video.pause();
-    video.srcObject = null;
-
-    source.getTracks().forEach((track) => {
-      if (track.readyState !== 'ended') track.stop();
-    });
-
-    canvasStream.getTracks().forEach((track) => {
-      if (track.readyState !== 'ended') track.stop();
-    });
-
-    resetFilters();
-    renderer.dispose();
 
     try {
-      facemesh.reset();
+      mindarThree?.stop();
     } catch {
-      // Camera switching must not be blocked by tracker cleanup.
+      // no-op
     }
-  };
 
-  maskedVideoTrack.addEventListener('ended', stop, { once: true });
-  sourceVideoTrack.addEventListener('ended', stop, { once: true });
+    source.getAudioTracks().forEach((track) => {
+      if (track.readyState !== 'ended') track.stop();
+    });
 
-  renderRaf = requestAnimationFrame(render);
+    container.remove();
 
-  return {
-    stream: output,
-    stop,
-  };
+    throw error;
+  }
 }
