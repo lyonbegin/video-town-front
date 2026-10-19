@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>VDEV2 GitHub Runtime · Telemedicine Integration</title>
+  <link rel="stylesheet" href="./style.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div>
+      <strong>VDEV2</strong><span>Fresh Foundation</span>
+    </div>
+    <div class="safety">SYNTHETIC ONLY · PHYSICAL ACTUATION DISABLED</div>
+  </header>
+  <main class="layout">
+    <aside class="sidebar">
+      <input id="search" placeholder="장비 검색" />
+      <select id="category"><option value="">전체 분류</option></select>
+      <div id="deviceList" class="device-list"></div>
+    </aside>
+    <section class="workspace">
+      <div id="empty" class="empty">왼쪽에서 장비를 선택하세요.</div>
+      <div id="detail" hidden>
+        <div class="title-row">
+          <div>
+            <div id="deviceName" class="device-name"></div>
+            <div id="deviceCode" class="muted"></div>
+          </div>
+          <button id="createBtn" class="primary">가상 장비 인스턴스 생성</button>
+        </div>
+        <div id="sourceSummary" class="source-summary"></div>
+        <div id="instanceSection" hidden>
+          <div class="axis-grid" id="axes"></div>
+          <div class="commands" id="commands"></div>
+          <div id="interlockBox" class="interlock" hidden></div>
+          <div class="panel-card">
+            <div class="panel-head">
+              <strong id="panelTitle"></strong>
+              <span id="viewerBadge"></span>
+            </div>
+            <div id="panel"></div>
+          </div>
+          <div class="panel-card">
+            <strong>Runtime events</strong>
+            <pre id="events"></pre>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+  <script src="./vendor/openseadragon.js"></script>
+  <script src="./vendor/vtk.js"></script>
+  <script type="module" src="./app.js"></script>
+</body>
+</html>

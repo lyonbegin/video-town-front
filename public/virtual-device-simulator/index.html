@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Virtual Medical Device Simulator</title>
+  <link rel="stylesheet" href="./simulator.css" />
+</head>
+<body>
+  <div class="shell">
+    <aside class="sidebar">
+      <div class="brand"><div class="brand-mark">V</div><div><strong>VDEV LAB</strong><span>Medical Device Simulator</span></div></div>
+      <nav>
+        <button class="nav active" data-view="devices">장비 시뮬레이터</button>
+        <button class="nav" data-view="gateway">Edge Gateway</button>
+        <button class="nav" data-view="events">이벤트 로그</button>
+        <button class="nav" data-view="faults">Fault Lab</button>
+      </nav>
+      <div class="side-status"><span class="dot" id="runtimeDot"></span><div><b id="runtimeStatus">연결 확인 중</b><small>localhost:8891</small></div></div>
+    </aside>
+    <main>
+      <header class="topbar">
+        <div><p class="eyebrow">산간·도서 원격 종합진료 플랫폼</p><h1>가상 의료기기 시뮬레이터</h1><p class="subtitle">51종 DeviceType · Virtual Adapter · Edge Gateway · Health / Data / Command</p></div>
+        <div class="top-actions"><button class="btn ghost" id="refreshBtn">새로고침</button><button class="btn primary" id="allStartBtn">51종 전체 시작</button></div>
+      </header>
+
+      <section class="summary-grid">
+        <article class="summary"><span>전체 장비</span><strong id="totalCount">51</strong><small>Master DeviceType</small></article>
+        <article class="summary"><span>전원 ON</span><strong id="onCount">—</strong><small>Simulator runtime</small></article>
+        <article class="summary"><span>Core 장비</span><strong id="coreCount">19</strong><small>16 active exams coverage</small></article>
+        <article class="summary"><span>Gateway</span><strong id="gatewayState">—</strong><small id="gatewayCode">VDEV-EDGE-GW-001</small></article>
+      </section>
+
+      <section id="view-devices" class="view active">
+        <div class="toolbar panel">
+          <div class="search-wrap"><input id="search" placeholder="장비 코드 / 이름 / capability 검색" /></div>
+          <select id="categoryFilter"><option value="">전체 카테고리</option></select>
+          <select id="kindFilter"><option value="">전체 데이터 유형</option><option>NUMERIC</option><option>WAVEFORM</option><option>AUDIO</option><option>IMAGE</option><option>VIDEO</option></select>
+          <label class="check"><input type="checkbox" id="coreOnly" /> Core 19만</label>
+          <button class="btn" id="allGenerateBtn">전체 데이터 생성</button>
+          <button class="btn" id="allHealthBtn">전체 Health</button>
+        </div>
+        <div class="device-layout">
+          <section class="panel table-panel">
+            <div class="panel-title"><div><h2>Virtual Devices</h2><p id="filteredCount">51 devices</p></div><div class="legend"><i class="status ok"></i>정상 <i class="status warn"></i>경고 <i class="status off"></i>중지</div></div>
+            <div class="table-scroll">
+              <table><thead><tr><th>장비</th><th>Category</th><th>Data</th><th>Power</th><th>Health</th><th>Technical</th><th></th></tr></thead><tbody id="deviceRows"></tbody></table>
+            </div>
+          </section>
+          <aside class="panel detail" id="deviceDetail"><div class="empty">장비를 선택하면 상세 시뮬레이션 패널이 표시됩니다.</div></aside>
+        </div>
+      </section>
+
+      <section id="view-gateway" class="view">
+        <div class="two-col">
+          <article class="panel"><div class="panel-title"><h2>Virtual Edge Gateway</h2></div><div id="gatewayDetail" class="kv"></div><div class="action-row"><button class="btn primary" id="heartbeatBtn">Heartbeat 전송</button><button class="btn danger" id="offlineBtn">60초 Offline 주입</button></div></article>
+          <article class="panel"><div class="panel-title"><h2>Edge 통신 범위</h2></div><ul class="contract-list"><li>GET /edge/gateway/commands</li><li>POST /edge/gateway/events</li><li>POST /edge/gateway/heartbeat</li><li>POST /edge/gateway/faults</li><li>POST /edge/gateway/uploads</li><li>POST /edge/gateway/command-acks</li></ul></article>
+        </div>
+      </section>
+
+      <section id="view-events" class="view"><article class="panel"><div class="panel-title"><h2>Simulator / Edge Event Log</h2><button class="btn ghost" id="eventsRefreshBtn">갱신</button></div><div id="eventLog" class="event-log"></div></article></section>
+
+      <section id="view-faults" class="view">
+        <div class="fault-grid">
+          <article class="panel fault-card"><b>Gateway Offline</b><p>Heartbeat를 60초 중단해 gateway degradation/offline 상태 전이를 검증합니다.</p><button class="btn danger" data-fault="gateway-offline">주입</button></article>
+          <article class="panel fault-card"><b>Device Health Error</b><p>선택한 장비에 ERROR + DISCONNECTED health event를 전송합니다.</p><button class="btn danger" data-fault="device-error">선택 장비에 주입</button></article>
+          <article class="panel fault-card"><b>Stale Health</b><p>선택 장비의 health event를 4분 중단하여 stale 판정을 유도합니다.</p><button class="btn warning" data-fault="device-stale">선택 장비에 주입</button></article>
+          <article class="panel fault-card"><b>Recovery</b><p>선택 장비를 ON / OK / CONNECTED 상태로 복구하고 health event를 전송합니다.</p><button class="btn primary" data-fault="device-recover">복구</button></article>
+        </div>
+      </section>
+    </main>
+  </div>
+  <div id="toast" class="toast"></div>
+  <script src="./simulator.js"></script>
+</body>
+</html>

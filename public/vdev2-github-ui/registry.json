@@ -1,0 +1,1805 @@
+{
+  "schemaVersion": "vdev2-github-upstream-ui-registry.v1",
+  "deviceCount": 78,
+  "policy": {
+    "vdev2CustomUiAllowed": false,
+    "fallback": "FAIL_CLOSED",
+    "theme": "WHITE_BLUE_ONLY",
+    "therapeuticPhysicalActuationAllowed": false
+  },
+  "devices": [
+    {
+      "code": "AUTOMATED_BP_MONITOR",
+      "category": "활력징후",
+      "upstreamProjectId": "training-monitor-app",
+      "upstream": {
+        "name": "Training Monitor App",
+        "repo": "https://github.com/Abuhuuraira/training_monitor_app.git",
+        "surface": "BROWSER_APP",
+        "localUrl": "http://127.0.0.1:9181/displayMonitor",
+        "matchKind": "EXACT_OR_CLOSE_MONITOR_UI",
+        "runtime": "TRAINING_MONITOR"
+      },
+      "originalRepoIds": [
+        "training-monitor-app",
+        "infirmary-integrated"
+      ],
+      "originalSourceMode": "SOURCE_PORT_RESULT_UI",
+      "githubSources": [
+        "https://github.com/Abuhuuraira/training_monitor_app.git",
+        "https://github.com/tanjera/infirmary-integrated.git"
+      ],
+      "fallbackPolicy": "FAIL_CLOSED_NO_VDEV2_CUSTOM_UI",
+      "physicalActuationAllowed": false
+    },
+    {
+      "code": "BODY_COMPOSITION_ANALYZER",
+      "category": "활력징후",
+      "upstreamProjectId": "openscale",
+      "upstream": {
+        "name": "openScale",
+        "repo": "https://github.com/oliexdev/openScale.git",
+        "surface": "ANDROID_APP",
+        "localUrl": "",
+        "matchKind": "WEIGHT_BODY_METRICS_UI",
+        "runtime": "EXTRA_SOURCE"
+      },
+      "originalRepoIds": [
+        "infirmary-integrated"
+      ],
+      "originalSourceMode": "SOURCE_PORT_RESULT_UI",
+      "githubSources": [
+        "https://github.com/tanjera/infirmary-integrated.git",
+        "https://github.com/oliexdev/openScale.git"
+      ],
+      "fallbackPolicy": "FAIL_CLOSED_NO_VDEV2_CUSTOM_UI",
+      "physicalActuationAllowed": false
+    },
+    {
+      "code": "CAPNOMETER",
+      "category": "활력징후",
+      "upstreamProjectId": "training-monitor-app",
+      "upstream": {
+        "name": "Training Monitor App",
+        "repo": "https://github.com/Abuhuuraira/training_monitor_app.git",
+        "surface": "BROWSER_APP",
+        "localUrl": "http://127.0.0.1:9181/displayMonitor",
+        "matchKind": "EXACT_OR_CLOSE_MONITOR_UI",
+        "runtime": "TRAINING_MONITOR"
+      },
+      "originalRepoIds": [
+        "training-monitor-app",
+        "infirmary-integrated"
+      ],
+      "originalSourceMode": "SOURCE_PORT_RESULT_UI",
+      "githubSources": [
+        "https://github.com/Abuhuuraira/training_monitor_app.git",
+        "https://github.com/tanjera/infirmary-integrated.git"
+      ],
+      "fallbackPolicy": "FAIL_CLOSED_NO_VDEV2_CUSTOM_UI",
+      "physicalActuationAllowed": false
+    },
+    {
+      "code": "CLINICAL_THERMOMETER",
+      "category": "활력징후",
+      "upstreamProjectId": "training-monitor-app",
+      "upstream": {
+        "name": "Training Monitor App",
+        "repo": "https://github.com/Abuhuuraira/training_monitor_app.git",
+        "surface": "BROWSER_APP",
+        "localUrl": "http://127.0.0.1:9181/displayMonitor",
+        "matchKind": "EXACT_OR_CLOSE_MONITOR_UI",
+        "runtime": "TRAINING_MONITOR"
+      },
+      "originalRepoIds": [
+        "infirmary-integrated"
+      ],
+      "originalSourceMode": "SOURCE_PORT_RESULT_UI",
+      "githubSources": [
+        "https://github.com/tanjera/infirmary-integrated.git",
+        "https://github.com/Abuhuuraira/training_monitor_app.git"
+      ],
+      "fallbackPolicy": "FAIL_CLOSED_NO_VDEV2_CUSTOM_UI",
+      "physicalActuationAllowed": false
+    },
+    {
+      "code": "MEDICAL_SCALE",
+      "category": "활력징후",
+      "upstreamProjectId": "openscale",
+      "upstream": {
+        "name": "openScale",
+        "repo": "https://github.com/oliexdev/openScale.git",
+        "surface": "ANDROID_APP",
+        "localUrl": "",
+        "matchKind": "WEIGHT_BODY_METRICS_UI",
+        "runtime": "EXTRA_SOURCE"
+      },
+      "originalRepoIds": [
+        "infirmary-integrated"
+      ],
+      "originalSourceMode": "SOURCE_PORT_RESULT_UI",
+      "githubSources": [
+        "https://github.com/tanjera/infirmary-integrated.git",
+        "https://github.com/oliexdev/openScale.git"
+      ],
+      "fallbackPolicy": "FAIL_CLOSED_NO_VDEV2_CUSTOM_UI",
+      "physicalActuationAllowed": false
+    },
+    {
+      "code": "MULTIPARAMETER_PATIENT_MONITOR",
+      "category": "활력징후",
+      "upstreamProjectId": "training-monitor-app",
+      "upstream": {
+        "name": "Training Monitor App",
+        "repo": "https://github.com/Abuhuuraira/training_monitor_app.git",
+        "surface": "BROWSER_APP",
+        "localUrl": "http://127.0.0.1:9181/displayMonitor",
+        "matchKind": "EXACT_OR_CLOSE_MONITOR_UI",
+        "runtime": "TRAINING_MONITOR"
+      },
+      "originalRepoIds": [
+        "infirmary-integrated",
+        "training-monitor-app"
+      ],
+      "originalSourceMode": "SOURCE_PORT",
+      "githubSources": [
+        "https://github.com/tanjera/infirmary-integrated.git",
+        "https://github.com/Abuhuuraira/training_monitor_app.git"
+      ],
+      "fallbackPolicy": "FAIL_CLOSED_NO_VDEV2_CUSTOM_UI",
+      "physicalActuationAllowed": false
+    },
+    {
+      "code": "PULSE_OXIMETER",
+      "category": "활력징후",
+      "upstreamProjectId": "training-monitor-app",
+      "upstream": {
+        "name": "Training Monitor App",
+        "repo": "https://github.com/Abuhuuraira/training_monitor_app.git",
+        "surface": "BROWSER_APP",
+        "localUrl": "http://127.0.0.1:9181/displayMonitor",
+        "matchKind": "EXACT_OR_CLOSE_MONITOR_UI",
+        "runtime": "TRAINING_MONITOR"
+      },
+      "originalRepoIds": [
+        "training-monitor-app",
+        "infirmary-integrated"
+      ],
+      "originalSourceMode": "SOURCE_PORT_RESULT_UI",
+      "githubSources": [
+        "https://github.com/Abuhuuraira/training_monitor_app.git",
+        "https://github.com/tanjera/infirmary-integrated.git"
+      ],
+      "fallbackPolicy": "FAIL_CLOSED_NO_VDEV2_CUSTOM_UI",
+      "physicalActuationAllowed": false
+    },
+    {
+      "code": "STADIOMETER",
+      "category": "활력징후",
+      "upstreamProjectId": "openscale",
+      "upstream": {
+        "name": "openScale",
+        "repo": "https://github.com/oliexdev/openScale.git",
+        "surface": "ANDROID_APP",
+        "localUrl": "",
+        "matchKind": "WEIGHT_BODY_METRICS_UI",
+        "runtime": "EXTRA_SOURCE"
+      },
+      "originalRepoIds": [
+        "infirmary-integrated"
+      ],
+      "originalSourceMode": "SOURCE_PORT_RESULT_UI",
+      "githubSources": [
+        "https://github.com/tanjera/infirmary-integrated.git",
+        "https://github.com/oliexdev/openScale.git"
+      ],
+      "fallbackPolicy": "FAIL_CLOSED_NO_VDEV2_CUSTOM_UI",
+      "physicalActuationAllowed": false
+    },
+    {
+      "code": "ABPM_MONITOR",
+      "category": "활력징후",
+      "upstreamProjectId": "training-monitor-app",
+      "upstream": {
+        "name": "Training Monitor App",
+        "repo": "https://github.com/Abuhuuraira/training_monitor_app.git",
+        "surface": "BROWSER_APP",
+        "localUrl": "http://127.0.0.1:9181/displayMonitor",
+        "matchKind": "EXACT_OR_CLOSE_MONITOR_UI",
+        "runtime": "TRAINING_MONITOR"
+      },
+      "originalRepoIds": [
+        "training-monitor-app"
+      ],
+      "originalSourceMode": "SOURCE_PORT_RESULT_UI",
+      "githubSources": [
+        "https://github.com/Abuhuuraira/training_monitor_app.git"
+      ],
+      "fallbackPolicy": "FAIL_CLOSED_NO_VDEV2_CUSTOM_UI",
+      "physicalActuationAllowed": false
+    },
+    {
+      "code": "DIGITAL_STETHOSCOPE",
+      "category": "심폐신호",
+      "upstreamProjectId": "digital-stethoscope",
+      "upstream": {
+        "name": "Digital-Stethoscope",
+        "repo": "https://github.com/Hxpnot1c/Digital-Stethoscope.git",
+        "surface": "PYTHON_NATIVE",
+        "localUrl": "",
+        "matchKind": "EXACT_STETHOSCOPE_UI",
+        "runtime": "SOURCE_NATIVE"
+      },
+      "originalRepoIds": [
+        "digital-stethoscope"
+      ],
+      "originalSourceMode": "SOURCE_PORT_RESULT_UI",
+      "githubSources": [
+        "https://github.com/Hxpnot1c/Digital-Stethoscope.git"
+      ],
+      "fallbackPolicy": "FAIL_CLOSED_NO_VDEV2_CUSTOM_UI",
+      "physicalActuationAllowed": false
+    },
+    {
+      "code": "ECG_12_LEAD",
+      "category": "심폐신호",
+      "upstreamProjectId": "infirmary-integrated",
+      "upstream": {
+        "name": "Infirmary Integrated",
+        "repo": "https://github.com/tanjera/infirmary-integrated.git",
+        "surface": "WINDOWS_NATIVE",
+        "localUrl": "",
+        "matchKind": "EXACT_OR_CLOSE_MEDICAL_DEVICE_SIMULATOR",
+        "runtime": "INFIRMARY"
+      },
+      "originalRepoIds": [
+        "infirmary-integrated",
+        "training-monitor-app",
+        "wfdb-python"
+      ],
+      "originalSourceMode": "SOURCE_PORT+FIXTURE",
+      "githubSources": [
+        "https://github.com/tanjera/infirmary-integrated.git",
+        "https://github.com/Abuhuuraira/training_monitor_app.git",
+        "https://github.com/MIT-LCP/wfdb-python.git"
+      ],
+      "fallbackPolicy": "FAIL_CLOSED_NO_VDEV2_CUSTOM_UI",
+      "physicalActuationAllowed": false
+    },
+    {
+      "code": "ECG_HANDHELD_SINGLE_LEAD",
+      "category": "심폐신호",
+      "upstreamProjectId": "training-monitor-app",
+      "upstream": {
+        "name": "Training Monitor App",
+        "repo": "https://github.com/Abuhuuraira/training_monitor_app.git",
+        "surface": "BROWSER_APP",
+        "localUrl": "http://127.0.0.1:9181/displayMonitor",
+        "matchKind": "EXACT_OR_CLOSE_MONITOR_UI",
+        "runtime": "TRAINING_MONITOR"
+      },
+      "originalRepoIds": [
+        "infirmary-integrated",
+        "training-monitor-app"
+      ],
+      "originalSourceMode": "SOURCE_PORT_RESULT_UI",
+      "githubSources": [
+        "https://github.com/tanjera/infirmary-integrated.git",
+        "https://github.com/Abuhuuraira/training_monitor_app.git"
+      ],
+      "fallbackPolicy": "FAIL_CLOSED_NO_VDEV2_CUSTOM_UI",
+      "physicalActuationAllowed": false
+    },
+    {
+      "code": "HOLTER_RECORDER",
+      "category": "심폐신호",
+      "upstreamProjectId": "openbci-gui",
+      "upstream": {
+        "name": "OpenBCI GUI",
+        "repo": "https://github.com/OpenBCI/OpenBCI_GUI.git",
+        "surface": "DESKTOP_APP",
+        "localUrl": "",
+        "matchKind": "EXACT_BIOSIGNAL_GUI",
+        "runtime": "EXTRA_SOURCE"
+      },
+      "originalRepoIds": [
+        "brainflow",
+        "wfdb-python"
+      ],
+      "originalSourceMode": "SOURCE_LOCK_PROVENANCE+OFFICIAL_PREBUILT_RUNTIME",
+      "githubSources": [
+        "https://github.com/brainflow-dev/brainflow.git",
+        "https://github.com/MIT-LCP/wfdb-python.git",
+        "https://github.com/OpenBCI/OpenBCI_GUI.git"
+      ],
+      "fallbackPolicy": "FAIL_CLOSED_NO_VDEV2_CUSTOM_UI",
+      "physicalActuationAllowed": false
+    },
+    {
+      "code": "FULL_PFT_SYSTEM",
+      "category": "호흡",
+      "upstreamProjectId": "respmech",
+      "upstream": {
+        "name": "RespMech",
+        "repo": "https://github.com/emilwalsted/respmech.git",
+        "surface": "WINDOWS_NATIVE",
+        "localUrl": "",
+        "matchKind": "RESPIRATORY_GUI",
+        "runtime": "EXTRA_SOURCE"
+      },
+      "originalRepoIds": [
+        "open-spirometer"
+      ],
+      "originalSourceMode": "SOURCE_PORT_RESULT_UI",
+      "githubSources": [
+        "https://github.com/suyashkumar/OpenSpirometer.git",
+        "https://github.com/emilwalsted/respmech.git"
+      ],
+      "fallbackPolicy": "FAIL_CLOSED_NO_VDEV2_CUSTOM_UI",
+      "physicalActuationAllowed": false
+    },
+    {
+      "code": "PEAK_FLOW_METER",
+      "category": "호흡",
+      "upstreamProjectId": "respmech",
+      "upstream": {
+        "name": "RespMech",
+        "repo": "https://github.com/emilwalsted/respmech.git",
+        "surface": "WINDOWS_NATIVE",
+        "localUrl": "",
+        "matchKind": "RESPIRATORY_GUI",
+        "runtime": "EXTRA_SOURCE"
+      },
+      "originalRepoIds": [
+        "infirmary-integrated"
+      ],
+      "originalSourceMode": "SOURCE_PORT_RESULT_UI",
+      "githubSources": [
+        "https://github.com/tanjera/infirmary-integrated.git",
+        "https://github.com/emilwalsted/respmech.git"
+      ],
+      "fallbackPolicy": "FAIL_CLOSED_NO_VDEV2_CUSTOM_UI",
+      "physicalActuationAllowed": false
+    },
+    {
+      "code": "SPIROMETER",
+      "category": "호흡",
+      "upstreamProjectId": "respmech",
+      "upstream": {
+        "name": "RespMech",
+        "repo": "https://github.com/emilwalsted/respmech.git",
+        "surface": "WINDOWS_NATIVE",
+        "localUrl": "",
+        "matchKind": "RESPIRATORY_GUI",
+        "runtime": "EXTRA_SOURCE"
+      },
+      "originalRepoIds": [
+        "open-spirometer"
+      ],
+      "originalSourceMode": "HOLD_SOURCE_PORT",
+      "githubSources": [
+        "https://github.com/suyashkumar/OpenSpirometer.git",
+        "https://github.com/emilwalsted/respmech.git"
+      ],
+      "fallbackPolicy": "FAIL_CLOSED_NO_VDEV2_CUSTOM_UI",
+      "physicalActuationAllowed": false
+    },
+    {
+      "code": "ULTRASOUND_CART",
+      "category": "영상",
+      "upstreamProjectId": "ohif",
+      "upstream": {
+        "name": "OHIF Viewer",
+        "repo": "https://github.com/OHIF/Viewers.git",
+        "surface": "BROWSER_APP",
+        "localUrl": "http://127.0.0.1:9092/",
+        "matchKind": "EXACT_DICOM_VIEWER",
+        "runtime": "OHIF"
+      },
+      "originalRepoIds": [
+        "modality-emulator",
+        "ohif"
+      ],
+      "originalSourceMode": "PROVEN_NATIVE_DICOM+PERMANENT_DICOMWEB+OHIF_GATEWAY",
+      "githubSources": [
+        "https://github.com/hendrapaiton/Modality-Emulator.git",
+        "https://github.com/OHIF/Viewers.git"
+      ],
+      "fallbackPolicy": "FAIL_CLOSED_NO_VDEV2_CUSTOM_UI",
+      "physicalActuationAllowed": false
+    },
+    {
+      "code": "ULTRASOUND_HANDHELD",
+      "category": "영상",
+      "upstreamProjectId": "ohif",
+      "upstream": {
+        "name": "OHIF Viewer",
+        "repo": "https://github.com/OHIF/Viewers.git",
+        "surface": "BROWSER_APP",
+        "localUrl": "http://127.0.0.1:9092/",
+        "matchKind": "EXACT_DICOM_VIEWER",
+        "runtime": "OHIF"
+      },
+      "originalRepoIds": [
+        "modality-emulator",
+        "ohif"
+      ],
+      "originalSourceMode": "PROVEN_NATIVE_DICOM+PERMANENT_DICOMWEB+OHIF_GATEWAY",
+      "githubSources": [
+        "https://github.com/hendrapaiton/Modality-Emulator.git",
+        "https://github.com/OHIF/Viewers.git"
+      ],
+      "fallbackPolicy": "FAIL_CLOSED_NO_VDEV2_CUSTOM_UI",
+      "physicalActuationAllowed": false
+    },
+    {
+      "code": "CT_SCANNER",
+      "category": "영상",
+      "upstreamProjectId": "ohif",
+      "upstream": {
+        "name": "OHIF Viewer",
+        "repo": "https://github.com/OHIF/Viewers.git",
+        "surface": "BROWSER_APP",
+        "localUrl": "http://127.0.0.1:9092/",
+        "matchKind": "EXACT_DICOM_VIEWER",
+        "runtime": "OHIF"
+      },
+      "originalRepoIds": [
+        "modality-emulator",
+        "ohif"
+      ],
+      "originalSourceMode": "RUN_SIDECAR+RUN_VIEWER",
+      "githubSources": [
+        "https://github.com/hendrapaiton/Modality-Emulator.git",
+        "https://github.com/OHIF/Viewers.git"
+      ],
+      "fallbackPolicy": "FAIL_CLOSED_NO_VDEV2_CUSTOM_UI",
+      "physicalActuationAllowed": false
+    },
+    {
+      "code": "MAMMOGRAPHY_SYSTEM",
+      "category": "영상",
+      "upstreamProjectId": "ohif",
+      "upstream": {
+        "name": "OHIF Viewer",
+        "repo": "https://github.com/OHIF/Viewers.git",
+        "surface": "BROWSER_APP",
+        "localUrl": "http://127.0.0.1:9092/",
+        "matchKind": "EXACT_DICOM_VIEWER",
+        "runtime": "OHIF"
+      },
+      "originalRepoIds": [
+        "modality-emulator",
+        "ohif"
+      ],
+      "originalSourceMode": "PROVEN_NATIVE_DICOM+PERMANENT_DICOMWEB+OHIF_GATEWAY",
+      "githubSources": [
+        "https://github.com/hendrapaiton/Modality-Emulator.git",
+        "https://github.com/OHIF/Viewers.git"
+      ],
+      "fallbackPolicy": "FAIL_CLOSED_NO_VDEV2_CUSTOM_UI",
+      "physicalActuationAllowed": false
+    },
+    {
+      "code": "MRI_SCANNER",
+      "category": "영상",
+      "upstreamProjectId": "ohif",
+      "upstream": {
+        "name": "OHIF Viewer",
+        "repo": "https://github.com/OHIF/Viewers.git",
+        "surface": "BROWSER_APP",
+        "localUrl": "http://127.0.0.1:9092/",
+        "matchKind": "EXACT_DICOM_VIEWER",
+        "runtime": "OHIF"
+      },
+      "originalRepoIds": [
+        "modality-emulator",
+        "ohif"
+      ],
+      "originalSourceMode": "PROVEN_NATIVE_DICOM+PERMANENT_DICOMWEB+OHIF_GATEWAY",
+      "githubSources": [
+        "https://github.com/hendrapaiton/Modality-Emulator.git",
+        "https://github.com/OHIF/Viewers.git"
+      ],
+      "fallbackPolicy": "FAIL_CLOSED_NO_VDEV2_CUSTOM_UI",
+      "physicalActuationAllowed": false
+    },
+    {
+      "code": "XRAY_FIXED_DR",
+      "category": "영상",
+      "upstreamProjectId": "ohif",
+      "upstream": {
+        "name": "OHIF Viewer",
+        "repo": "https://github.com/OHIF/Viewers.git",
+        "surface": "BROWSER_APP",
+        "localUrl": "http://127.0.0.1:9092/",
+        "matchKind": "EXACT_DICOM_VIEWER",
+        "runtime": "OHIF"
+      },
+      "originalRepoIds": [
+        "modality-emulator",
+        "ohif"
+      ],
+      "originalSourceMode": "PROVEN_NATIVE_DICOM+PERMANENT_DICOMWEB+OHIF_GATEWAY",
+      "githubSources": [
+        "https://github.com/hendrapaiton/Modality-Emulator.git",
+        "https://github.com/OHIF/Viewers.git"
+      ],
+      "fallbackPolicy": "FAIL_CLOSED_NO_VDEV2_CUSTOM_UI",
+      "physicalActuationAllowed": false
+    },
+    {
+      "code": "XRAY_MOBILE_DR",
+      "category": "영상",
+      "upstreamProjectId": "ohif",
+      "upstream": {
+        "name": "OHIF Viewer",
+        "repo": "https://github.com/OHIF/Viewers.git",
+        "surface": "BROWSER_APP",
+        "localUrl": "http://127.0.0.1:9092/",
+        "matchKind": "EXACT_DICOM_VIEWER",
+        "runtime": "OHIF"
+      },
+      "originalRepoIds": [
+        "modality-emulator",
+        "ohif"
+      ],
+      "originalSourceMode": "PROVEN_NATIVE_DICOM+PERMANENT_DICOMWEB+OHIF_GATEWAY",
+      "githubSources": [
+        "https://github.com/hendrapaiton/Modality-Emulator.git",
+        "https://github.com/OHIF/Viewers.git"
+      ],
+      "fallbackPolicy": "FAIL_CLOSED_NO_VDEV2_CUSTOM_UI",
+      "physicalActuationAllowed": false
+    },
+    {
+      "code": "AUDIOMETER",
+      "category": "이비인후",
+      "upstreamProjectId": "retro-audiometer",
+      "upstream": {
+        "name": "Retro Audiometer Simulator",
+        "repo": "https://github.com/nishnarudkar/Retro-Audiometer-Simulator.git",
+        "surface": "BROWSER_APP",
+        "localUrl": "http://127.0.0.1:9191/upstream/retro-audiometer/index.html",
+        "matchKind": "EXACT_AUDIOMETER_SIMULATOR",
+        "runtime": "EXTRA_STATIC"
+      },
+      "originalRepoIds": [
+        "infirmary-integrated"
+      ],
+      "originalSourceMode": "SOURCE_PORT_RESULT_UI",
+      "githubSources": [
+        "https://github.com/tanjera/infirmary-integrated.git",
+        "https://github.com/nishnarudkar/Retro-Audiometer-Simulator.git"
+      ],
+      "fallbackPolicy": "FAIL_CLOSED_NO_VDEV2_CUSTOM_UI",
+      "physicalActuationAllowed": false
+    },
+    {
+      "code": "DIGITAL_OTOSCOPE",
+      "category": "이비인후",
+      "upstreamProjectId": "webrtc-samples",
+      "upstream": {
+        "name": "WebRTC Samples",
+        "repo": "https://github.com/webrtc/samples.git",
+        "surface": "BROWSER_APP",
+        "localUrl": "http://127.0.0.1:9191/upstream/webrtc-samples/src/content/getusermedia/gum/index.html",
+        "matchKind": "EXACT_WEBRTC_CAMERA_COMPONENT",
+        "runtime": "STATIC_SOURCE"
+      },
+      "originalRepoIds": [
+        "webrtc-samples",
+        "openseadragon"
+      ],
+      "originalSourceMode": "SOURCE_LOCK_PROVENANCE+WEBRTC_SYNTHETIC_BROWSER_RUNTIME+OPENSEADRAGON",
+      "githubSources": [
+        "https://github.com/webrtc/samples.git",
+        "https://github.com/openseadragon/openseadragon.git"
+      ],
+      "fallbackPolicy": "FAIL_CLOSED_NO_VDEV2_CUSTOM_UI",
+      "physicalActuationAllowed": false
+    },
+    {
+      "code": "TYMPANOMETER",
+      "category": "이비인후",
+      "upstreamProjectId": "tymp",
+      "upstream": {
+        "name": "uw-x/tymp",
+        "repo": "https://github.com/uw-x/tymp.git",
+        "surface": "ANDROID_MATLAB",
+        "localUrl": "",
+        "matchKind": "EXACT_TYMPANOMETER_PROJECT",
+        "runtime": "SOURCE_NATIVE"
+      },
+      "originalRepoIds": [
+        "tymp"
+      ],
+      "originalSourceMode": "SOURCE_PORT_RESULT_UI",
+      "githubSources": [
+        "https://github.com/uw-x/tymp.git"
+      ],
+      "fallbackPolicy": "FAIL_CLOSED_NO_VDEV2_CUSTOM_UI",
+      "physicalActuationAllowed": false
+    },
+    {
+      "code": "VIDEO_RHINOLARYNGOSCOPE",
+      "category": "이비인후",
+      "upstreamProjectId": "webrtc-samples",
+      "upstream": {
+        "name": "WebRTC Samples",
+        "repo": "https://github.com/webrtc/samples.git",
+        "surface": "BROWSER_APP",
+        "localUrl": "http://127.0.0.1:9191/upstream/webrtc-samples/src/content/getusermedia/gum/index.html",
+        "matchKind": "EXACT_WEBRTC_CAMERA_COMPONENT",
+        "runtime": "STATIC_SOURCE"
+      },
+      "originalRepoIds": [
+        "webrtc-samples",
+        "ohif"
+      ],
+      "originalSourceMode": "SOURCE_LOCK_PROVENANCE+WEBRTC_SYNTHETIC_BROWSER_RUNTIME+OHIF_CONDITIONAL",
+      "githubSources": [
+        "https://github.com/webrtc/samples.git",
+        "https://github.com/OHIF/Viewers.git"
+      ],
+      "fallbackPolicy": "FAIL_CLOSED_NO_VDEV2_CUSTOM_UI",
+      "physicalActuationAllowed": false
+    },
+    {
+      "code": "AUTOREFRACTOR_KERATOMETER",
+      "category": "안과",
+      "upstreamProjectId": "eyenetra-autorefractor",
+      "upstream": {
+        "name": "EyeNetra Autorefractor",
+        "repo": "https://github.com/vitorpamplona/EyeNetraAutorefractor.git",
+        "surface": "ANDROID_APP",
+        "localUrl": "",
+        "matchKind": "EXACT_AUTOREFRACTOR_APP",
+        "runtime": "EXTRA_SOURCE"
+      },
+      "originalRepoIds": [
+        "infirmary-integrated"
+      ],
+      "originalSourceMode": "SOURCE_PORT_RESULT_UI",
+      "githubSources": [
+        "https://github.com/tanjera/infirmary-integrated.git",
+        "https://github.com/vitorpamplona/EyeNetraAutorefractor.git"
+      ],
+      "fallbackPolicy": "FAIL_CLOSED_NO_VDEV2_CUSTOM_UI",
+      "physicalActuationAllowed": false
+    },
+    {
+      "code": "DIGITAL_SLIT_LAMP",
+      "category": "안과",
+      "upstreamProjectId": "webrtc-samples",
+      "upstream": {
+        "name": "WebRTC Samples",
+        "repo": "https://github.com/webrtc/samples.git",
+        "surface": "BROWSER_APP",
+        "localUrl": "http://127.0.0.1:9191/upstream/webrtc-samples/src/content/getusermedia/gum/index.html",
+        "matchKind": "EXACT_WEBRTC_CAMERA_COMPONENT",
+        "runtime": "STATIC_SOURCE"
+      },
+      "originalRepoIds": [
+        "webrtc-samples",
+        "openseadragon"
+      ],
+      "originalSourceMode": "SOURCE_LOCK_PROVENANCE+WEBRTC_SYNTHETIC_BROWSER_RUNTIME+OPENSEADRAGON",
+      "githubSources": [
+        "https://github.com/webrtc/samples.git",
+        "https://github.com/openseadragon/openseadragon.git"
+      ],
+      "fallbackPolicy": "FAIL_CLOSED_NO_VDEV2_CUSTOM_UI",
+      "physicalActuationAllowed": false
+    },
+    {
+      "code": "FUNDUS_CAMERA",
+      "category": "안과",
+      "upstreamProjectId": "retinagan",
+      "upstream": {
+        "name": "RetinaGAN",
+        "repo": "https://github.com/farrell236/RetinaGAN.git",
+        "surface": "PYTHON_WEB",
+        "localUrl": "http://127.0.0.1:9182/",
+        "matchKind": "RETINAL_IMAGE_UI",
+        "runtime": "SOURCE_NATIVE"
+      },
+      "originalRepoIds": [
+        "retinagan",
+        "openseadragon"
+      ],
+      "originalSourceMode": "FIXTURE+IMPORT_COMPONENT",
+      "githubSources": [
+        "https://github.com/farrell236/RetinaGAN.git",
+        "https://github.com/openseadragon/openseadragon.git"
+      ],
+      "fallbackPolicy": "FAIL_CLOSED_NO_VDEV2_CUSTOM_UI",
+      "physicalActuationAllowed": false
+    },
+    {
+      "code": "TONOMETER",
+      "category": "안과",
+      "upstreamProjectId": "infirmary-integrated",
+      "upstream": {
+        "name": "Infirmary Integrated",
+        "repo": "https://github.com/tanjera/infirmary-integrated.git",
+        "surface": "WINDOWS_NATIVE",
+        "localUrl": "",
+        "matchKind": "EXACT_OR_CLOSE_MEDICAL_DEVICE_SIMULATOR",
+        "runtime": "INFIRMARY"
+      },
+      "originalRepoIds": [
+        "infirmary-integrated"
+      ],
+      "originalSourceMode": "SOURCE_PORT_RESULT_UI",
+      "githubSources": [
+        "https://github.com/tanjera/infirmary-integrated.git"
+      ],
+      "fallbackPolicy": "FAIL_CLOSED_NO_VDEV2_CUSTOM_UI",
+      "physicalActuationAllowed": false
+    },
+    {
+      "code": "VISUAL_ACUITY_SYSTEM",
+      "category": "안과",
+      "upstreamProjectId": "fract10",
+      "upstream": {
+        "name": "FrACT10",
+        "repo": "https://github.com/michaelbach/FrACT10.git",
+        "surface": "BROWSER_APP",
+        "localUrl": "http://127.0.0.1:9191/upstream/fract10/index.html",
+        "matchKind": "EXACT_VISUAL_ACUITY_UI",
+        "runtime": "EXTRA_STATIC"
+      },
+      "originalRepoIds": [
+        "infirmary-integrated"
+      ],
+      "originalSourceMode": "SOURCE_PORT_RESULT_UI",
+      "githubSources": [
+        "https://github.com/tanjera/infirmary-integrated.git",
+        "https://github.com/michaelbach/FrACT10.git"
+      ],
+      "fallbackPolicy": "FAIL_CLOSED_NO_VDEV2_CUSTOM_UI",
+      "physicalActuationAllowed": false
+    },
+    {
+      "code": "OPHTHALMIC_OCT",
+      "category": "안과",
+      "upstreamProjectId": "ohif",
+      "upstream": {
+        "name": "OHIF Viewer",
+        "repo": "https://github.com/OHIF/Viewers.git",
+        "surface": "BROWSER_APP",
+        "localUrl": "http://127.0.0.1:9092/",
+        "matchKind": "EXACT_DICOM_VIEWER",
+        "runtime": "OHIF"
+      },
+      "originalRepoIds": [
+        "oct-simulation",
+        "ohif"
+      ],
+      "originalSourceMode": "SOURCE_LOCK_PROVENANCE+OCT_DICOM_CONDITIONAL+OHIF_GATEWAY",
+      "githubSources": [
+        "https://github.com/yuancu/oct-simulation.git",
+        "https://github.com/OHIF/Viewers.git"
+      ],
+      "fallbackPolicy": "FAIL_CLOSED_NO_VDEV2_CUSTOM_UI",
+      "physicalActuationAllowed": false
+    },
+    {
+      "code": "VISUAL_FIELD_ANALYZER",
+      "category": "안과",
+      "upstreamProjectId": "specvis",
+      "upstream": {
+        "name": "Specvis Desktop",
+        "repo": "https://github.com/piotrdzwiniel/Specvis-Desktop.git",
+        "surface": "JAVA_NATIVE",
+        "localUrl": "",
+        "matchKind": "EXACT_VISUAL_FIELD_UI",
+        "runtime": "EXTRA_SOURCE"
+      },
+      "originalRepoIds": [
+        "infirmary-integrated"
+      ],
+      "originalSourceMode": "SOURCE_PORT_RESULT_UI",
+      "githubSources": [
+        "https://github.com/tanjera/infirmary-integrated.git",
+        "https://github.com/piotrdzwiniel/Specvis-Desktop.git"
+      ],
+      "fallbackPolicy": "FAIL_CLOSED_NO_VDEV2_CUSTOM_UI",
+      "physicalActuationAllowed": false
+    },
+    {
+      "code": "CORNEAL_TOPOGRAPHER",
+      "category": "안과",
+      "upstreamProjectId": "corneal-topography",
+      "upstream": {
+        "name": "Corneal Topography using Placido Rings",
+        "repo": "https://github.com/psurya1994/corneal-topography-using-placido-rings.git",
+        "surface": "MATLAB_NATIVE",
+        "localUrl": "",
+        "matchKind": "EXACT_CORNEAL_TOPOGRAPHY_PROJECT",
+        "runtime": "SOURCE_NATIVE"
+      },
+      "originalRepoIds": [
+        "corneal-topography",
+        "openseadragon"
+      ],
+      "originalSourceMode": "SOURCE_PORT_POLAR_TOPOGRAPHY+OPENSEADRAGON",
+      "githubSources": [
+        "https://github.com/psurya1994/corneal-topography-using-placido-rings.git",
+        "https://github.com/openseadragon/openseadragon.git"
+      ],
+      "fallbackPolicy": "FAIL_CLOSED_NO_VDEV2_CUSTOM_UI",
+      "physicalActuationAllowed": false
+    },
+    {
+      "code": "OPTICAL_BIOMETER",
+      "category": "안과",
+      "upstreamProjectId": "iol-calculator",
+      "upstream": {
+        "name": "IOL Calculator",
+        "repo": "https://github.com/timothylcooke/iolcalculator.com.git",
+        "surface": "BROWSER_APP",
+        "localUrl": "",
+        "matchKind": "OPHTHALMIC_BIOMETRY_CALCULATION_UI",
+        "runtime": "EXTRA_SOURCE"
+      },
+      "originalRepoIds": [
+        "infirmary-integrated"
+      ],
+      "originalSourceMode": "SOURCE_PORT_RESULT_UI",
+      "githubSources": [
+        "https://github.com/tanjera/infirmary-integrated.git",
+        "https://github.com/timothylcooke/iolcalculator.com.git"
+      ],
+      "fallbackPolicy": "FAIL_CLOSED_NO_VDEV2_CUSTOM_UI",
+      "physicalActuationAllowed": false
+    },
+    {
+      "code": "CLINICAL_MACRO_CAMERA",
+      "category": "피부영상",
+      "upstreamProjectId": "webrtc-samples",
+      "upstream": {
+        "name": "WebRTC Samples",
+        "repo": "https://github.com/webrtc/samples.git",
+        "surface": "BROWSER_APP",
+        "localUrl": "http://127.0.0.1:9191/upstream/webrtc-samples/src/content/getusermedia/gum/index.html",
+        "matchKind": "EXACT_WEBRTC_CAMERA_COMPONENT",
+        "runtime": "STATIC_SOURCE"
+      },
+      "originalRepoIds": [
+        "webrtc-samples",
+        "openseadragon"
+      ],
+      "originalSourceMode": "SOURCE_LOCK_PROVENANCE+WEBRTC_SYNTHETIC_BROWSER_RUNTIME+OPENSEADRAGON",
+      "githubSources": [
+        "https://github.com/webrtc/samples.git",
+        "https://github.com/openseadragon/openseadragon.git"
+      ],
+      "fallbackPolicy": "FAIL_CLOSED_NO_VDEV2_CUSTOM_UI",
+      "physicalActuationAllowed": false
+    },
+    {
+      "code": "DIGITAL_DERMATOSCOPE",
+      "category": "피부영상",
+      "upstreamProjectId": "webrtc-samples",
+      "upstream": {
+        "name": "WebRTC Samples",
+        "repo": "https://github.com/webrtc/samples.git",
+        "surface": "BROWSER_APP",
+        "localUrl": "http://127.0.0.1:9191/upstream/webrtc-samples/src/content/getusermedia/gum/index.html",
+        "matchKind": "EXACT_WEBRTC_CAMERA_COMPONENT",
+        "runtime": "STATIC_SOURCE"
+      },
+      "originalRepoIds": [
+        "webrtc-samples",
+        "openseadragon"
+      ],
+      "originalSourceMode": "SOURCE_LOCK_PROVENANCE+WEBRTC_SYNTHETIC_BROWSER_RUNTIME+OPENSEADRAGON",
+      "githubSources": [
+        "https://github.com/webrtc/samples.git",
+        "https://github.com/openseadragon/openseadragon.git"
+      ],
+      "fallbackPolicy": "FAIL_CLOSED_NO_VDEV2_CUSTOM_UI",
+      "physicalActuationAllowed": false
+    },
+    {
+      "code": "WOUND_IMAGING_CAMERA",
+      "category": "피부영상",
+      "upstreamProjectId": "webrtc-samples",
+      "upstream": {
+        "name": "WebRTC Samples",
+        "repo": "https://github.com/webrtc/samples.git",
+        "surface": "BROWSER_APP",
+        "localUrl": "http://127.0.0.1:9191/upstream/webrtc-samples/src/content/getusermedia/gum/index.html",
+        "matchKind": "EXACT_WEBRTC_CAMERA_COMPONENT",
+        "runtime": "STATIC_SOURCE"
+      },
+      "originalRepoIds": [
+        "webrtc-samples",
+        "openseadragon"
+      ],
+      "originalSourceMode": "SOURCE_LOCK_PROVENANCE+WEBRTC_SYNTHETIC_BROWSER_RUNTIME+OPENSEADRAGON",
+      "githubSources": [
+        "https://github.com/webrtc/samples.git",
+        "https://github.com/openseadragon/openseadragon.git"
+      ],
+      "fallbackPolicy": "FAIL_CLOSED_NO_VDEV2_CUSTOM_UI",
+      "physicalActuationAllowed": false
+    },
+    {
+      "code": "SKIN_ANALYZER",
+      "category": "피부영상",
+      "upstreamProjectId": "webrtc-samples",
+      "upstream": {
+        "name": "WebRTC Samples",
+        "repo": "https://github.com/webrtc/samples.git",
+        "surface": "BROWSER_APP",
+        "localUrl": "http://127.0.0.1:9191/upstream/webrtc-samples/src/content/getusermedia/gum/index.html",
+        "matchKind": "EXACT_WEBRTC_CAMERA_COMPONENT",
+        "runtime": "STATIC_SOURCE"
+      },
+      "originalRepoIds": [
+        "webrtc-samples",
+        "openseadragon"
+      ],
+      "originalSourceMode": "SOURCE_LOCK_PROVENANCE+WEBRTC_SYNTHETIC_BROWSER_RUNTIME+OPENSEADRAGON",
+      "githubSources": [
+        "https://github.com/webrtc/samples.git",
+        "https://github.com/openseadragon/openseadragon.git"
+      ],
+      "fallbackPolicy": "FAIL_CLOSED_NO_VDEV2_CUSTOM_UI",
+      "physicalActuationAllowed": false
+    },
+    {
+      "code": "DERM_LASER_CO2",
+      "category": "치료·피부",
+      "upstreamProjectId": "laser-preview",
+      "upstream": {
+        "name": "laser-laser-laser",
+        "repo": "https://github.com/edmonkey-nz/laser-laser-laser.git",
+        "surface": "BROWSER_APP",
+        "localUrl": "",
+        "matchKind": "GENERIC_LASER_PREVIEW_UI_NOT_CLINICAL",
+        "runtime": "EXTRA_SOURCE_SAFE_PREVIEW_ONLY"
+      },
+      "originalRepoIds": [],
+      "originalSourceMode": "CUSTOM_SYNTHETIC_ONLY",
+      "githubSources": [
+        "https://github.com/edmonkey-nz/laser-laser-laser.git"
+      ],
+      "fallbackPolicy": "FAIL_CLOSED_NO_VDEV2_CUSTOM_UI",
+      "physicalActuationAllowed": false
+    },
+    {
+      "code": "DERM_LASER_ER_YAG",
+      "category": "치료·피부",
+      "upstreamProjectId": "laser-preview",
+      "upstream": {
+        "name": "laser-laser-laser",
+        "repo": "https://github.com/edmonkey-nz/laser-laser-laser.git",
+        "surface": "BROWSER_APP",
+        "localUrl": "",
+        "matchKind": "GENERIC_LASER_PREVIEW_UI_NOT_CLINICAL",
+        "runtime": "EXTRA_SOURCE_SAFE_PREVIEW_ONLY"
+      },
+      "originalRepoIds": [],
+      "originalSourceMode": "CUSTOM_SYNTHETIC_ONLY",
+      "githubSources": [
+        "https://github.com/edmonkey-nz/laser-laser-laser.git"
+      ],
+      "fallbackPolicy": "FAIL_CLOSED_NO_VDEV2_CUSTOM_UI",
+      "physicalActuationAllowed": false
+    },
+    {
+      "code": "DERM_LASER_ND_YAG_LONG_PULSE",
+      "category": "치료·피부",
+      "upstreamProjectId": "laser-preview",
+      "upstream": {
+        "name": "laser-laser-laser",
+        "repo": "https://github.com/edmonkey-nz/laser-laser-laser.git",
+        "surface": "BROWSER_APP",
+        "localUrl": "",
+        "matchKind": "GENERIC_LASER_PREVIEW_UI_NOT_CLINICAL",
+        "runtime": "EXTRA_SOURCE_SAFE_PREVIEW_ONLY"
+      },
+      "originalRepoIds": [],
+      "originalSourceMode": "CUSTOM_SYNTHETIC_ONLY",
+      "githubSources": [
+        "https://github.com/edmonkey-nz/laser-laser-laser.git"
+      ],
+      "fallbackPolicy": "FAIL_CLOSED_NO_VDEV2_CUSTOM_UI",
+      "physicalActuationAllowed": false
+    },
+    {
+      "code": "DERM_LASER_ND_YAG_Q_SWITCHED",
+      "category": "치료·피부",
+      "upstreamProjectId": "laser-preview",
+      "upstream": {
+        "name": "laser-laser-laser",
+        "repo": "https://github.com/edmonkey-nz/laser-laser-laser.git",
+        "surface": "BROWSER_APP",
+        "localUrl": "",
+        "matchKind": "GENERIC_LASER_PREVIEW_UI_NOT_CLINICAL",
+        "runtime": "EXTRA_SOURCE_SAFE_PREVIEW_ONLY"
+      },
+      "originalRepoIds": [],
+      "originalSourceMode": "CUSTOM_SYNTHETIC_ONLY",
+      "githubSources": [
+        "https://github.com/edmonkey-nz/laser-laser-laser.git"
+      ],
+      "fallbackPolicy": "FAIL_CLOSED_NO_VDEV2_CUSTOM_UI",
+      "physicalActuationAllowed": false
+    },
+    {
+      "code": "DERM_LASER_PICOSECOND",
+      "category": "치료·피부",
+      "upstreamProjectId": "laser-preview",
+      "upstream": {
+        "name": "laser-laser-laser",
+        "repo": "https://github.com/edmonkey-nz/laser-laser-laser.git",
+        "surface": "BROWSER_APP",
+        "localUrl": "",
+        "matchKind": "GENERIC_LASER_PREVIEW_UI_NOT_CLINICAL",
+        "runtime": "EXTRA_SOURCE_SAFE_PREVIEW_ONLY"
+      },
+      "originalRepoIds": [],
+      "originalSourceMode": "CUSTOM_SYNTHETIC_ONLY",
+      "githubSources": [
+        "https://github.com/edmonkey-nz/laser-laser-laser.git"
+      ],
+      "fallbackPolicy": "FAIL_CLOSED_NO_VDEV2_CUSTOM_UI",
+      "physicalActuationAllowed": false
+    },
+    {
+      "code": "DERM_LASER_ALEXANDRITE",
+      "category": "치료·피부",
+      "upstreamProjectId": "laser-preview",
+      "upstream": {
+        "name": "laser-laser-laser",
+        "repo": "https://github.com/edmonkey-nz/laser-laser-laser.git",
+        "surface": "BROWSER_APP",
+        "localUrl": "",
+        "matchKind": "GENERIC_LASER_PREVIEW_UI_NOT_CLINICAL",
+        "runtime": "EXTRA_SOURCE_SAFE_PREVIEW_ONLY"
+      },
+      "originalRepoIds": [],
+      "originalSourceMode": "CUSTOM_SYNTHETIC_ONLY",
+      "githubSources": [
+        "https://github.com/edmonkey-nz/laser-laser-laser.git"
+      ],
+      "fallbackPolicy": "FAIL_CLOSED_NO_VDEV2_CUSTOM_UI",
+      "physicalActuationAllowed": false
+    },
+    {
+      "code": "DERM_LASER_DIODE",
+      "category": "치료·피부",
+      "upstreamProjectId": "laser-preview",
+      "upstream": {
+        "name": "laser-laser-laser",
+        "repo": "https://github.com/edmonkey-nz/laser-laser-laser.git",
+        "surface": "BROWSER_APP",
+        "localUrl": "",
+        "matchKind": "GENERIC_LASER_PREVIEW_UI_NOT_CLINICAL",
+        "runtime": "EXTRA_SOURCE_SAFE_PREVIEW_ONLY"
+      },
+      "originalRepoIds": [],
+      "originalSourceMode": "CUSTOM_SYNTHETIC_ONLY",
+      "githubSources": [
+        "https://github.com/edmonkey-nz/laser-laser-laser.git"
+      ],
+      "fallbackPolicy": "FAIL_CLOSED_NO_VDEV2_CUSTOM_UI",
+      "physicalActuationAllowed": false
+    },
+    {
+      "code": "DERM_LASER_FRACTIONAL",
+      "category": "치료·피부",
+      "upstreamProjectId": "laser-preview",
+      "upstream": {
+        "name": "laser-laser-laser",
+        "repo": "https://github.com/edmonkey-nz/laser-laser-laser.git",
+        "surface": "BROWSER_APP",
+        "localUrl": "",
+        "matchKind": "GENERIC_LASER_PREVIEW_UI_NOT_CLINICAL",
+        "runtime": "EXTRA_SOURCE_SAFE_PREVIEW_ONLY"
+      },
+      "originalRepoIds": [],
+      "originalSourceMode": "CUSTOM_SYNTHETIC_ONLY",
+      "githubSources": [
+        "https://github.com/edmonkey-nz/laser-laser-laser.git"
+      ],
+      "fallbackPolicy": "FAIL_CLOSED_NO_VDEV2_CUSTOM_UI",
+      "physicalActuationAllowed": false
+    },
+    {
+      "code": "DERM_IPL",
+      "category": "치료·피부",
+      "upstreamProjectId": "laser-preview",
+      "upstream": {
+        "name": "laser-laser-laser",
+        "repo": "https://github.com/edmonkey-nz/laser-laser-laser.git",
+        "surface": "BROWSER_APP",
+        "localUrl": "",
+        "matchKind": "GENERIC_LASER_PREVIEW_UI_NOT_CLINICAL",
+        "runtime": "EXTRA_SOURCE_SAFE_PREVIEW_ONLY"
+      },
+      "originalRepoIds": [],
+      "originalSourceMode": "CUSTOM_SYNTHETIC_ONLY",
+      "githubSources": [
+        "https://github.com/edmonkey-nz/laser-laser-laser.git"
+      ],
+      "fallbackPolicy": "FAIL_CLOSED_NO_VDEV2_CUSTOM_UI",
+      "physicalActuationAllowed": false
+    },
+    {
+      "code": "DERM_RF_MONOPOLAR",
+      "category": "치료·피부",
+      "upstreamProjectId": "ablation-planner",
+      "upstream": {
+        "name": "AblationPlanner",
+        "repo": "https://github.com/PerkLab/AblationPlanner.git",
+        "surface": "3D_SLICER_MODULE",
+        "localUrl": "",
+        "matchKind": "RF_ABLATION_PLANNING_UI",
+        "runtime": "EXTRA_SOURCE"
+      },
+      "originalRepoIds": [],
+      "originalSourceMode": "CUSTOM_SYNTHETIC_ONLY",
+      "githubSources": [
+        "https://github.com/PerkLab/AblationPlanner.git"
+      ],
+      "fallbackPolicy": "FAIL_CLOSED_NO_VDEV2_CUSTOM_UI",
+      "physicalActuationAllowed": false
+    },
+    {
+      "code": "DERM_RF_BIPOLAR",
+      "category": "치료·피부",
+      "upstreamProjectId": "ablation-planner",
+      "upstream": {
+        "name": "AblationPlanner",
+        "repo": "https://github.com/PerkLab/AblationPlanner.git",
+        "surface": "3D_SLICER_MODULE",
+        "localUrl": "",
+        "matchKind": "RF_ABLATION_PLANNING_UI",
+        "runtime": "EXTRA_SOURCE"
+      },
+      "originalRepoIds": [],
+      "originalSourceMode": "CUSTOM_SYNTHETIC_ONLY",
+      "githubSources": [
+        "https://github.com/PerkLab/AblationPlanner.git"
+      ],
+      "fallbackPolicy": "FAIL_CLOSED_NO_VDEV2_CUSTOM_UI",
+      "physicalActuationAllowed": false
+    },
+    {
+      "code": "DERM_RF_MICRONEEDLE",
+      "category": "치료·피부",
+      "upstreamProjectId": "ablation-planner",
+      "upstream": {
+        "name": "AblationPlanner",
+        "repo": "https://github.com/PerkLab/AblationPlanner.git",
+        "surface": "3D_SLICER_MODULE",
+        "localUrl": "",
+        "matchKind": "RF_ABLATION_PLANNING_UI",
+        "runtime": "EXTRA_SOURCE"
+      },
+      "originalRepoIds": [],
+      "originalSourceMode": "CUSTOM_SYNTHETIC_ONLY",
+      "githubSources": [
+        "https://github.com/PerkLab/AblationPlanner.git"
+      ],
+      "fallbackPolicy": "FAIL_CLOSED_NO_VDEV2_CUSTOM_UI",
+      "physicalActuationAllowed": false
+    },
+    {
+      "code": "DERM_RF_ELECTROSURGERY",
+      "category": "치료·피부",
+      "upstreamProjectId": "ablation-planner",
+      "upstream": {
+        "name": "AblationPlanner",
+        "repo": "https://github.com/PerkLab/AblationPlanner.git",
+        "surface": "3D_SLICER_MODULE",
+        "localUrl": "",
+        "matchKind": "RF_ABLATION_PLANNING_UI",
+        "runtime": "EXTRA_SOURCE"
+      },
+      "originalRepoIds": [],
+      "originalSourceMode": "CUSTOM_SYNTHETIC_ONLY",
+      "githubSources": [
+        "https://github.com/PerkLab/AblationPlanner.git"
+      ],
+      "fallbackPolicy": "FAIL_CLOSED_NO_VDEV2_CUSTOM_UI",
+      "physicalActuationAllowed": false
+    },
+    {
+      "code": "DERM_LOW_FREQUENCY_STIMULATOR",
+      "category": "치료·피부",
+      "upstreamProjectId": "fnmes",
+      "upstream": {
+        "name": "fNMES GUI",
+        "repo": "https://github.com/ThemisEfth/fNMES-Technical-Guide.git",
+        "surface": "PYTHON_NATIVE",
+        "localUrl": "",
+        "matchKind": "ELECTRICAL_STIMULATION_UI",
+        "runtime": "EXTRA_SOURCE_NO_HARDWARE_AUTO_CONNECT"
+      },
+      "originalRepoIds": [],
+      "originalSourceMode": "CUSTOM_SYNTHETIC_ONLY",
+      "githubSources": [
+        "https://github.com/ThemisEfth/fNMES-Technical-Guide.git"
+      ],
+      "fallbackPolicy": "FAIL_CLOSED_NO_VDEV2_CUSTOM_UI",
+      "physicalActuationAllowed": false
+    },
+    {
+      "code": "DERM_HIFU",
+      "category": "치료·피부",
+      "upstreamProjectId": "openlifu",
+      "upstream": {
+        "name": "OpenLIFU Desktop Application",
+        "repo": "https://github.com/OpenwaterHealth/openlifu-desktop-application.git",
+        "surface": "DESKTOP_APP",
+        "localUrl": "",
+        "matchKind": "FOCUSED_ULTRASOUND_UI",
+        "runtime": "EXTRA_SOURCE_NO_HARDWARE_AUTO_CONNECT"
+      },
+      "originalRepoIds": [],
+      "originalSourceMode": "CUSTOM_SYNTHETIC_ONLY",
+      "githubSources": [
+        "https://github.com/OpenwaterHealth/openlifu-desktop-application.git"
+      ],
+      "fallbackPolicy": "FAIL_CLOSED_NO_VDEV2_CUSTOM_UI",
+      "physicalActuationAllowed": false
+    },
+    {
+      "code": "DERM_LED_PHOTOTHERAPY",
+      "category": "치료·피부",
+      "upstreamProjectId": "wled-sim",
+      "upstream": {
+        "name": "WLED Simulator",
+        "repo": "https://github.com/13rac1/wled-sim.git",
+        "surface": "DESKTOP_SIMULATOR",
+        "localUrl": "",
+        "matchKind": "GENERIC_LED_SIMULATOR_NOT_CLINICAL",
+        "runtime": "EXTRA_SOURCE_SIMULATOR"
+      },
+      "originalRepoIds": [],
+      "originalSourceMode": "CUSTOM_SYNTHETIC_ONLY",
+      "githubSources": [
+        "https://github.com/13rac1/wled-sim.git"
+      ],
+      "fallbackPolicy": "FAIL_CLOSED_NO_VDEV2_CUSTOM_UI",
+      "physicalActuationAllowed": false
+    },
+    {
+      "code": "DERM_CRYOSURGERY",
+      "category": "치료·피부",
+      "upstreamProjectId": "tip-cryo",
+      "upstream": {
+        "name": "TIP Cryostat GUI",
+        "repo": "https://github.com/qkitgroup/tip.git",
+        "surface": "PYTHON_NATIVE",
+        "localUrl": "",
+        "matchKind": "GENERIC_CRYOGENIC_UI_NOT_CRYOSURGERY",
+        "runtime": "EXTRA_SOURCE"
+      },
+      "originalRepoIds": [],
+      "originalSourceMode": "CUSTOM_SYNTHETIC_ONLY",
+      "githubSources": [
+        "https://github.com/qkitgroup/tip.git"
+      ],
+      "fallbackPolicy": "FAIL_CLOSED_NO_VDEV2_CUSTOM_UI",
+      "physicalActuationAllowed": false
+    },
+    {
+      "code": "DENTAL_INTRAORAL_XRAY",
+      "category": "치과",
+      "upstreamProjectId": "ohif",
+      "upstream": {
+        "name": "OHIF Viewer",
+        "repo": "https://github.com/OHIF/Viewers.git",
+        "surface": "BROWSER_APP",
+        "localUrl": "http://127.0.0.1:9092/",
+        "matchKind": "EXACT_DICOM_VIEWER",
+        "runtime": "OHIF"
+      },
+      "originalRepoIds": [
+        "modality-emulator",
+        "ohif"
+      ],
+      "originalSourceMode": "PROVEN_NATIVE_DICOM+PERMANENT_DICOMWEB+OHIF_GATEWAY",
+      "githubSources": [
+        "https://github.com/hendrapaiton/Modality-Emulator.git",
+        "https://github.com/OHIF/Viewers.git"
+      ],
+      "fallbackPolicy": "FAIL_CLOSED_NO_VDEV2_CUSTOM_UI",
+      "physicalActuationAllowed": false
+    },
+    {
+      "code": "DENTAL_PANORAMIC_XRAY",
+      "category": "치과",
+      "upstreamProjectId": "ohif",
+      "upstream": {
+        "name": "OHIF Viewer",
+        "repo": "https://github.com/OHIF/Viewers.git",
+        "surface": "BROWSER_APP",
+        "localUrl": "http://127.0.0.1:9092/",
+        "matchKind": "EXACT_DICOM_VIEWER",
+        "runtime": "OHIF"
+      },
+      "originalRepoIds": [
+        "modality-emulator",
+        "ohif"
+      ],
+      "originalSourceMode": "PROVEN_NATIVE_DICOM+PERMANENT_DICOMWEB+OHIF_GATEWAY",
+      "githubSources": [
+        "https://github.com/hendrapaiton/Modality-Emulator.git",
+        "https://github.com/OHIF/Viewers.git"
+      ],
+      "fallbackPolicy": "FAIL_CLOSED_NO_VDEV2_CUSTOM_UI",
+      "physicalActuationAllowed": false
+    },
+    {
+      "code": "DENTAL_CBCT",
+      "category": "치과",
+      "upstreamProjectId": "ohif",
+      "upstream": {
+        "name": "OHIF Viewer",
+        "repo": "https://github.com/OHIF/Viewers.git",
+        "surface": "BROWSER_APP",
+        "localUrl": "http://127.0.0.1:9092/",
+        "matchKind": "EXACT_DICOM_VIEWER",
+        "runtime": "OHIF"
+      },
+      "originalRepoIds": [
+        "modality-emulator",
+        "ohif"
+      ],
+      "originalSourceMode": "PROVEN_NATIVE_DICOM+PERMANENT_DICOMWEB+OHIF_GATEWAY",
+      "githubSources": [
+        "https://github.com/hendrapaiton/Modality-Emulator.git",
+        "https://github.com/OHIF/Viewers.git"
+      ],
+      "fallbackPolicy": "FAIL_CLOSED_NO_VDEV2_CUSTOM_UI",
+      "physicalActuationAllowed": false
+    },
+    {
+      "code": "INTRAORAL_CAMERA",
+      "category": "치과",
+      "upstreamProjectId": "webrtc-samples",
+      "upstream": {
+        "name": "WebRTC Samples",
+        "repo": "https://github.com/webrtc/samples.git",
+        "surface": "BROWSER_APP",
+        "localUrl": "http://127.0.0.1:9191/upstream/webrtc-samples/src/content/getusermedia/gum/index.html",
+        "matchKind": "EXACT_WEBRTC_CAMERA_COMPONENT",
+        "runtime": "STATIC_SOURCE"
+      },
+      "originalRepoIds": [
+        "webrtc-samples",
+        "openseadragon"
+      ],
+      "originalSourceMode": "SOURCE_LOCK_PROVENANCE+WEBRTC_SYNTHETIC_BROWSER_RUNTIME+OPENSEADRAGON",
+      "githubSources": [
+        "https://github.com/webrtc/samples.git",
+        "https://github.com/openseadragon/openseadragon.git"
+      ],
+      "fallbackPolicy": "FAIL_CLOSED_NO_VDEV2_CUSTOM_UI",
+      "physicalActuationAllowed": false
+    },
+    {
+      "code": "INTRAORAL_SCANNER",
+      "category": "치과",
+      "upstreamProjectId": "vtk-js",
+      "upstream": {
+        "name": "vtk.js",
+        "repo": "https://github.com/Kitware/vtk-js.git",
+        "surface": "BROWSER_COMPONENT",
+        "localUrl": "https://kitware.github.io/vtk-js/examples/",
+        "matchKind": "EXACT_3D_RENDERER_COMPONENT",
+        "runtime": "REMOTE_UPSTREAM"
+      },
+      "originalRepoIds": [
+        "vtk-js"
+      ],
+      "originalSourceMode": "IMPORT_COMPONENT+CUSTOM",
+      "githubSources": [
+        "https://github.com/Kitware/vtk-js.git"
+      ],
+      "fallbackPolicy": "FAIL_CLOSED_NO_VDEV2_CUSTOM_UI",
+      "physicalActuationAllowed": false
+    },
+    {
+      "code": "BLOOD_GAS_ANALYZER",
+      "category": "검사실",
+      "upstreamProjectId": "lacs",
+      "upstream": {
+        "name": "LACS Laboratory Analyzer Communication Simulator",
+        "repo": "https://github.com/libinfaby/LACS.git",
+        "surface": "PYTHON_NATIVE",
+        "localUrl": "",
+        "matchKind": "EXACT_LAB_ANALYZER_GUI",
+        "runtime": "EXTRA_SOURCE"
+      },
+      "originalRepoIds": [
+        "py-medical-simulators",
+        "hmis-analyzer-simulator"
+      ],
+      "originalSourceMode": "SOURCE_PORT_RESULT_UI",
+      "githubSources": [
+        "https://github.com/Tremmors/pyMedicalSimulators.git",
+        "https://github.com/hmislk/hmis-analyzer-simulator.git",
+        "https://github.com/libinfaby/LACS.git"
+      ],
+      "fallbackPolicy": "FAIL_CLOSED_NO_VDEV2_CUSTOM_UI",
+      "physicalActuationAllowed": false
+    },
+    {
+      "code": "CBC_ANALYZER",
+      "category": "검사실",
+      "upstreamProjectId": "lacs",
+      "upstream": {
+        "name": "LACS Laboratory Analyzer Communication Simulator",
+        "repo": "https://github.com/libinfaby/LACS.git",
+        "surface": "PYTHON_NATIVE",
+        "localUrl": "",
+        "matchKind": "EXACT_LAB_ANALYZER_GUI",
+        "runtime": "EXTRA_SOURCE"
+      },
+      "originalRepoIds": [
+        "py-medical-simulators",
+        "hmis-analyzer-simulator"
+      ],
+      "originalSourceMode": "SOURCE_PORT_PROTOCOL",
+      "githubSources": [
+        "https://github.com/Tremmors/pyMedicalSimulators.git",
+        "https://github.com/hmislk/hmis-analyzer-simulator.git",
+        "https://github.com/libinfaby/LACS.git"
+      ],
+      "fallbackPolicy": "FAIL_CLOSED_NO_VDEV2_CUSTOM_UI",
+      "physicalActuationAllowed": false
+    },
+    {
+      "code": "COAGULATION_ANALYZER",
+      "category": "검사실",
+      "upstreamProjectId": "lacs",
+      "upstream": {
+        "name": "LACS Laboratory Analyzer Communication Simulator",
+        "repo": "https://github.com/libinfaby/LACS.git",
+        "surface": "PYTHON_NATIVE",
+        "localUrl": "",
+        "matchKind": "EXACT_LAB_ANALYZER_GUI",
+        "runtime": "EXTRA_SOURCE"
+      },
+      "originalRepoIds": [
+        "py-medical-simulators",
+        "hmis-analyzer-simulator"
+      ],
+      "originalSourceMode": "SOURCE_PORT_RESULT_UI",
+      "githubSources": [
+        "https://github.com/Tremmors/pyMedicalSimulators.git",
+        "https://github.com/hmislk/hmis-analyzer-simulator.git",
+        "https://github.com/libinfaby/LACS.git"
+      ],
+      "fallbackPolicy": "FAIL_CLOSED_NO_VDEV2_CUSTOM_UI",
+      "physicalActuationAllowed": false
+    },
+    {
+      "code": "CRP_ANALYZER",
+      "category": "검사실",
+      "upstreamProjectId": "lacs",
+      "upstream": {
+        "name": "LACS Laboratory Analyzer Communication Simulator",
+        "repo": "https://github.com/libinfaby/LACS.git",
+        "surface": "PYTHON_NATIVE",
+        "localUrl": "",
+        "matchKind": "EXACT_LAB_ANALYZER_GUI",
+        "runtime": "EXTRA_SOURCE"
+      },
+      "originalRepoIds": [
+        "py-medical-simulators",
+        "hmis-analyzer-simulator"
+      ],
+      "originalSourceMode": "SOURCE_PORT_RESULT_UI",
+      "githubSources": [
+        "https://github.com/Tremmors/pyMedicalSimulators.git",
+        "https://github.com/hmislk/hmis-analyzer-simulator.git",
+        "https://github.com/libinfaby/LACS.git"
+      ],
+      "fallbackPolicy": "FAIL_CLOSED_NO_VDEV2_CUSTOM_UI",
+      "physicalActuationAllowed": false
+    },
+    {
+      "code": "ELECTROLYTE_ANALYZER",
+      "category": "검사실",
+      "upstreamProjectId": "lacs",
+      "upstream": {
+        "name": "LACS Laboratory Analyzer Communication Simulator",
+        "repo": "https://github.com/libinfaby/LACS.git",
+        "surface": "PYTHON_NATIVE",
+        "localUrl": "",
+        "matchKind": "EXACT_LAB_ANALYZER_GUI",
+        "runtime": "EXTRA_SOURCE"
+      },
+      "originalRepoIds": [
+        "py-medical-simulators",
+        "hmis-analyzer-simulator"
+      ],
+      "originalSourceMode": "SOURCE_PORT_RESULT_UI",
+      "githubSources": [
+        "https://github.com/Tremmors/pyMedicalSimulators.git",
+        "https://github.com/hmislk/hmis-analyzer-simulator.git",
+        "https://github.com/libinfaby/LACS.git"
+      ],
+      "fallbackPolicy": "FAIL_CLOSED_NO_VDEV2_CUSTOM_UI",
+      "physicalActuationAllowed": false
+    },
+    {
+      "code": "GLUCOSE_METER",
+      "category": "검사실",
+      "upstreamProjectId": "lacs",
+      "upstream": {
+        "name": "LACS Laboratory Analyzer Communication Simulator",
+        "repo": "https://github.com/libinfaby/LACS.git",
+        "surface": "PYTHON_NATIVE",
+        "localUrl": "",
+        "matchKind": "EXACT_LAB_ANALYZER_GUI",
+        "runtime": "EXTRA_SOURCE"
+      },
+      "originalRepoIds": [
+        "py-medical-simulators",
+        "hmis-analyzer-simulator"
+      ],
+      "originalSourceMode": "SOURCE_PORT_RESULT_UI",
+      "githubSources": [
+        "https://github.com/Tremmors/pyMedicalSimulators.git",
+        "https://github.com/hmislk/hmis-analyzer-simulator.git",
+        "https://github.com/libinfaby/LACS.git"
+      ],
+      "fallbackPolicy": "FAIL_CLOSED_NO_VDEV2_CUSTOM_UI",
+      "physicalActuationAllowed": false
+    },
+    {
+      "code": "HBA1C_ANALYZER",
+      "category": "검사실",
+      "upstreamProjectId": "lacs",
+      "upstream": {
+        "name": "LACS Laboratory Analyzer Communication Simulator",
+        "repo": "https://github.com/libinfaby/LACS.git",
+        "surface": "PYTHON_NATIVE",
+        "localUrl": "",
+        "matchKind": "EXACT_LAB_ANALYZER_GUI",
+        "runtime": "EXTRA_SOURCE"
+      },
+      "originalRepoIds": [
+        "py-medical-simulators",
+        "hmis-analyzer-simulator"
+      ],
+      "originalSourceMode": "SOURCE_PORT_RESULT_UI",
+      "githubSources": [
+        "https://github.com/Tremmors/pyMedicalSimulators.git",
+        "https://github.com/hmislk/hmis-analyzer-simulator.git",
+        "https://github.com/libinfaby/LACS.git"
+      ],
+      "fallbackPolicy": "FAIL_CLOSED_NO_VDEV2_CUSTOM_UI",
+      "physicalActuationAllowed": false
+    },
+    {
+      "code": "LIPID_ANALYZER",
+      "category": "검사실",
+      "upstreamProjectId": "lacs",
+      "upstream": {
+        "name": "LACS Laboratory Analyzer Communication Simulator",
+        "repo": "https://github.com/libinfaby/LACS.git",
+        "surface": "PYTHON_NATIVE",
+        "localUrl": "",
+        "matchKind": "EXACT_LAB_ANALYZER_GUI",
+        "runtime": "EXTRA_SOURCE"
+      },
+      "originalRepoIds": [
+        "py-medical-simulators",
+        "hmis-analyzer-simulator"
+      ],
+      "originalSourceMode": "SOURCE_PORT_RESULT_UI",
+      "githubSources": [
+        "https://github.com/Tremmors/pyMedicalSimulators.git",
+        "https://github.com/hmislk/hmis-analyzer-simulator.git",
+        "https://github.com/libinfaby/LACS.git"
+      ],
+      "fallbackPolicy": "FAIL_CLOSED_NO_VDEV2_CUSTOM_UI",
+      "physicalActuationAllowed": false
+    },
+    {
+      "code": "TROPONIN_ANALYZER",
+      "category": "검사실",
+      "upstreamProjectId": "lacs",
+      "upstream": {
+        "name": "LACS Laboratory Analyzer Communication Simulator",
+        "repo": "https://github.com/libinfaby/LACS.git",
+        "surface": "PYTHON_NATIVE",
+        "localUrl": "",
+        "matchKind": "EXACT_LAB_ANALYZER_GUI",
+        "runtime": "EXTRA_SOURCE"
+      },
+      "originalRepoIds": [
+        "py-medical-simulators",
+        "hmis-analyzer-simulator"
+      ],
+      "originalSourceMode": "SOURCE_PORT_RESULT_UI",
+      "githubSources": [
+        "https://github.com/Tremmors/pyMedicalSimulators.git",
+        "https://github.com/hmislk/hmis-analyzer-simulator.git",
+        "https://github.com/libinfaby/LACS.git"
+      ],
+      "fallbackPolicy": "FAIL_CLOSED_NO_VDEV2_CUSTOM_UI",
+      "physicalActuationAllowed": false
+    },
+    {
+      "code": "URINE_ANALYZER",
+      "category": "검사실",
+      "upstreamProjectId": "lacs",
+      "upstream": {
+        "name": "LACS Laboratory Analyzer Communication Simulator",
+        "repo": "https://github.com/libinfaby/LACS.git",
+        "surface": "PYTHON_NATIVE",
+        "localUrl": "",
+        "matchKind": "EXACT_LAB_ANALYZER_GUI",
+        "runtime": "EXTRA_SOURCE"
+      },
+      "originalRepoIds": [
+        "py-medical-simulators",
+        "hmis-analyzer-simulator"
+      ],
+      "originalSourceMode": "SOURCE_PORT_RESULT_UI",
+      "githubSources": [
+        "https://github.com/Tremmors/pyMedicalSimulators.git",
+        "https://github.com/hmislk/hmis-analyzer-simulator.git",
+        "https://github.com/libinfaby/LACS.git"
+      ],
+      "fallbackPolicy": "FAIL_CLOSED_NO_VDEV2_CUSTOM_UI",
+      "physicalActuationAllowed": false
+    },
+    {
+      "code": "EEG_SYSTEM",
+      "category": "특수검사",
+      "upstreamProjectId": "openbci-gui",
+      "upstream": {
+        "name": "OpenBCI GUI",
+        "repo": "https://github.com/OpenBCI/OpenBCI_GUI.git",
+        "surface": "DESKTOP_APP",
+        "localUrl": "",
+        "matchKind": "EXACT_BIOSIGNAL_GUI",
+        "runtime": "EXTRA_SOURCE"
+      },
+      "originalRepoIds": [
+        "brainflow",
+        "wfdb-python"
+      ],
+      "originalSourceMode": "SOURCE_LOCK_PROVENANCE+OFFICIAL_PREBUILT_RUNTIME",
+      "githubSources": [
+        "https://github.com/brainflow-dev/brainflow.git",
+        "https://github.com/MIT-LCP/wfdb-python.git",
+        "https://github.com/OpenBCI/OpenBCI_GUI.git"
+      ],
+      "fallbackPolicy": "FAIL_CLOSED_NO_VDEV2_CUSTOM_UI",
+      "physicalActuationAllowed": false
+    },
+    {
+      "code": "EMG_NCS_SYSTEM",
+      "category": "특수검사",
+      "upstreamProjectId": "openbci-gui",
+      "upstream": {
+        "name": "OpenBCI GUI",
+        "repo": "https://github.com/OpenBCI/OpenBCI_GUI.git",
+        "surface": "DESKTOP_APP",
+        "localUrl": "",
+        "matchKind": "EXACT_BIOSIGNAL_GUI",
+        "runtime": "EXTRA_SOURCE"
+      },
+      "originalRepoIds": [
+        "brainflow",
+        "wfdb-python"
+      ],
+      "originalSourceMode": "SOURCE_LOCK_PROVENANCE+OFFICIAL_PREBUILT_RUNTIME",
+      "githubSources": [
+        "https://github.com/brainflow-dev/brainflow.git",
+        "https://github.com/MIT-LCP/wfdb-python.git",
+        "https://github.com/OpenBCI/OpenBCI_GUI.git"
+      ],
+      "fallbackPolicy": "FAIL_CLOSED_NO_VDEV2_CUSTOM_UI",
+      "physicalActuationAllowed": false
+    },
+    {
+      "code": "CTG_MONITOR",
+      "category": "특수검사",
+      "upstreamProjectId": "infirmary-integrated",
+      "upstream": {
+        "name": "Infirmary Integrated",
+        "repo": "https://github.com/tanjera/infirmary-integrated.git",
+        "surface": "WINDOWS_NATIVE",
+        "localUrl": "",
+        "matchKind": "EXACT_OR_CLOSE_MEDICAL_DEVICE_SIMULATOR",
+        "runtime": "INFIRMARY"
+      },
+      "originalRepoIds": [
+        "infirmary-integrated",
+        "wfdb-python"
+      ],
+      "originalSourceMode": "SOURCE_PORT+FIXTURE",
+      "githubSources": [
+        "https://github.com/tanjera/infirmary-integrated.git",
+        "https://github.com/MIT-LCP/wfdb-python.git"
+      ],
+      "fallbackPolicy": "FAIL_CLOSED_NO_VDEV2_CUSTOM_UI",
+      "physicalActuationAllowed": false
+    },
+    {
+      "code": "FETAL_DOPPLER",
+      "category": "특수검사",
+      "upstreamProjectId": "digital-stethoscope",
+      "upstream": {
+        "name": "Digital-Stethoscope",
+        "repo": "https://github.com/Hxpnot1c/Digital-Stethoscope.git",
+        "surface": "PYTHON_NATIVE",
+        "localUrl": "",
+        "matchKind": "EXACT_STETHOSCOPE_UI",
+        "runtime": "SOURCE_NATIVE"
+      },
+      "originalRepoIds": [
+        "digital-stethoscope"
+      ],
+      "originalSourceMode": "SOURCE_PORT_RESULT_UI",
+      "githubSources": [
+        "https://github.com/Hxpnot1c/Digital-Stethoscope.git"
+      ],
+      "fallbackPolicy": "FAIL_CLOSED_NO_VDEV2_CUSTOM_UI",
+      "physicalActuationAllowed": false
+    },
+    {
+      "code": "DIGITAL_MICROSCOPE",
+      "category": "특수검사",
+      "upstreamProjectId": "webrtc-samples",
+      "upstream": {
+        "name": "WebRTC Samples",
+        "repo": "https://github.com/webrtc/samples.git",
+        "surface": "BROWSER_APP",
+        "localUrl": "http://127.0.0.1:9191/upstream/webrtc-samples/src/content/getusermedia/gum/index.html",
+        "matchKind": "EXACT_WEBRTC_CAMERA_COMPONENT",
+        "runtime": "STATIC_SOURCE"
+      },
+      "originalRepoIds": [
+        "webrtc-samples",
+        "openseadragon"
+      ],
+      "originalSourceMode": "SOURCE_LOCK_PROVENANCE+WEBRTC_SYNTHETIC_BROWSER_RUNTIME+OPENSEADRAGON",
+      "githubSources": [
+        "https://github.com/webrtc/samples.git",
+        "https://github.com/openseadragon/openseadragon.git"
+      ],
+      "fallbackPolicy": "FAIL_CLOSED_NO_VDEV2_CUSTOM_UI",
+      "physicalActuationAllowed": false
+    },
+    {
+      "code": "TELEEXAM_CAMERA",
+      "category": "특수검사",
+      "upstreamProjectId": "webrtc-samples",
+      "upstream": {
+        "name": "WebRTC Samples",
+        "repo": "https://github.com/webrtc/samples.git",
+        "surface": "BROWSER_APP",
+        "localUrl": "http://127.0.0.1:9191/upstream/webrtc-samples/src/content/getusermedia/gum/index.html",
+        "matchKind": "EXACT_WEBRTC_CAMERA_COMPONENT",
+        "runtime": "STATIC_SOURCE"
+      },
+      "originalRepoIds": [
+        "webrtc-samples"
+      ],
+      "originalSourceMode": "SOURCE_LOCK_PROVENANCE+WEBRTC_SYNTHETIC_BROWSER_RUNTIME",
+      "githubSources": [
+        "https://github.com/webrtc/samples.git"
+      ],
+      "fallbackPolicy": "FAIL_CLOSED_NO_VDEV2_CUSTOM_UI",
+      "physicalActuationAllowed": false
+    }
+  ]
+}
