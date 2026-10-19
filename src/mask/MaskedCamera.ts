@@ -27,6 +27,8 @@ type FacePose = {
 type FilteredPose = FacePose & {
   vx: number;
   vy: number;
+  rawCx: number;
+  rawCy: number;
   lastMeasurementAt: number;
 };
 
@@ -74,17 +76,28 @@ const RIGHT_EYE_OUTER = 263;
 const INFERENCE_MAX_WIDTH = 512;
 const INFERENCE_MAX_HEIGHT = 288;
 
-// Position should react fast. Size should react slowly.
-const POSITION_TAU_MS = 22;
-const ROTATION_TAU_MS = 70;
-const SIZE_TAU_MS = 180;
-const SIZE_DEADBAND = 0.018;
-const MAX_SIZE_CHANGE_PER_MEASUREMENT = 0.025;
+// The tracker has sub-pixel landmark noise even when the head is still.
+// Small motion is locked; large motion is allowed through quickly.
+const POSITION_DEADBAND_X_RATIO = 0.012;
+const POSITION_DEADBAND_Y_RATIO = 0.010;
+const POSITION_TAU_SLOW_MS = 150;
+const POSITION_TAU_FAST_MS = 24;
+const POSITION_FAST_RATIO = 0.10;
 
-// micro-facemesh returns the previous pipelined tracking result on tracked frames.
-// Prediction compensates that age rather than drawing the stale point directly.
-const MAX_PREDICTION_MS = 90;
-const MAX_PREDICTION_FACE_RATIO = 0.16;
+const ROTATION_DEADBAND_RAD = 0.014;
+const ROTATION_TAU_MS = 110;
+
+const SIZE_TAU_MS = 220;
+const SIZE_DEADBAND = 0.020;
+const MAX_SIZE_CHANGE_PER_MEASUREMENT = 0.022;
+
+const VELOCITY_BLEND = 0.26;
+const PREDICTION_MIN_SPEED_RATIO_PER_MS = 0.00055;
+
+// Prediction is only used for deliberate movement. It is disabled while the
+// face is effectively stationary so landmark noise cannot become visible drift.
+const MAX_PREDICTION_MS = 70;
+const MAX_PREDICTION_FACE_RATIO = 0.10;
 
 let facemeshPromise: Promise<FacemeshApi> | undefined;
 
@@ -237,6 +250,16 @@ function poseFromLandmarks(
   };
 }
 
+function softDeadband(delta: number, deadband: number): number {
+  const magnitude = Math.abs(delta);
+
+  if (magnitude <= deadband) {
+    return 0;
+  }
+
+  return Math.sign(delta) * (magnitude - deadband);
+}
+
 function stabilizeSize(
   current: number,
   measured: number,
@@ -270,50 +293,117 @@ function updateFilteredPose(
       ...measured,
       vx: 0,
       vy: 0,
+      rawCx: measured.cx,
+      rawCy: measured.cy,
       lastMeasurementAt: measurementAt,
     };
   }
 
   const dtMs = clamp(measurementAt - current.lastMeasurementAt, 8, 160);
-  const positionAlpha = alphaFor(dtMs, POSITION_TAU_MS);
+
+  const deadX = Math.max(1.5, current.width * POSITION_DEADBAND_X_RATIO);
+  const deadY = Math.max(1.5, current.height * POSITION_DEADBAND_Y_RATIO);
+
+  // Lock the mask completely for tiny landmark movement instead of merely
+  // smoothing it. This removes the visible left/right/up/down "buzz".
+  const moveX = softDeadband(measured.cx - current.cx, deadX);
+  const moveY = softDeadband(measured.cy - current.cy, deadY);
+
+  const movementRatio = Math.hypot(
+    moveX / Math.max(1, current.width),
+    moveY / Math.max(1, current.height),
+  );
+
+  const fastMix = clamp(movementRatio / POSITION_FAST_RATIO, 0, 1);
+  const positionTau =
+    POSITION_TAU_SLOW_MS +
+    (POSITION_TAU_FAST_MS - POSITION_TAU_SLOW_MS) * fastMix;
+  const positionAlpha = alphaFor(dtMs, positionTau);
+
+  const nextCx = current.cx + moveX * positionAlpha;
+  const nextCy = current.cy + moveY * positionAlpha;
+
+  // Compute velocity from consecutive raw measurements, not from the filtered
+  // position. A deadband is applied again so sensor noise cannot generate
+  // prediction movement while the face is stationary.
+  const rawMoveX = softDeadband(
+    measured.cx - current.rawCx,
+    deadX * 0.75,
+  );
+  const rawMoveY = softDeadband(
+    measured.cy - current.rawCy,
+    deadY * 0.75,
+  );
+
+  let measuredVx = rawMoveX / dtMs;
+  let measuredVy = rawMoveY / dtMs;
+
+  const minVx = current.width * PREDICTION_MIN_SPEED_RATIO_PER_MS;
+  const minVy = current.height * PREDICTION_MIN_SPEED_RATIO_PER_MS;
+
+  if (Math.abs(measuredVx) < minVx) measuredVx = 0;
+  if (Math.abs(measuredVy) < minVy) measuredVy = 0;
+
+  const maxVelocity = Math.max(current.width, current.height) * 0.014;
+
+  let vx = clamp(
+    current.vx * (1 - VELOCITY_BLEND) + measuredVx * VELOCITY_BLEND,
+    -maxVelocity,
+    maxVelocity,
+  );
+
+  let vy = clamp(
+    current.vy * (1 - VELOCITY_BLEND) + measuredVy * VELOCITY_BLEND,
+    -maxVelocity,
+    maxVelocity,
+  );
+
+  // Kill residual velocity quickly after the user stops moving.
+  if (measuredVx === 0) vx *= 0.52;
+  if (measuredVy === 0) vy *= 0.52;
+  if (Math.abs(vx) < minVx * 0.65) vx = 0;
+  if (Math.abs(vy) < minVy * 0.65) vy = 0;
+
+  let rotationDelta = normalizeAngle(measured.rotation - current.rotation);
+
+  if (Math.abs(rotationDelta) <= ROTATION_DEADBAND_RAD) {
+    rotationDelta = 0;
+  } else {
+    rotationDelta =
+      Math.sign(rotationDelta) *
+      (Math.abs(rotationDelta) - ROTATION_DEADBAND_RAD);
+  }
+
   const rotationAlpha = alphaFor(dtMs, ROTATION_TAU_MS);
 
-  const rawVx = (measured.cx - current.cx) / dtMs;
-  const rawVy = (measured.cy - current.cy) / dtMs;
-
-  // Velocity is filtered separately from position. This is used only for
-  // short-horizon prediction, never for scale.
-  const velocityBlend = 0.42;
-  const maxVelocity = Math.max(current.width, current.height) * 0.018;
-
-  const vx = clamp(
-    current.vx * (1 - velocityBlend) + rawVx * velocityBlend,
-    -maxVelocity,
-    maxVelocity,
-  );
-
-  const vy = clamp(
-    current.vy * (1 - velocityBlend) + rawVy * velocityBlend,
-    -maxVelocity,
-    maxVelocity,
-  );
-
-  const rotationDelta = normalizeAngle(measured.rotation - current.rotation);
-
   return {
-    cx: current.cx + (measured.cx - current.cx) * positionAlpha,
-    cy: current.cy + (measured.cy - current.cy) * positionAlpha,
+    cx: nextCx,
+    cy: nextCy,
     width: stabilizeSize(current.width, measured.width, dtMs),
     height: stabilizeSize(current.height, measured.height, dtMs),
     rotation: current.rotation + rotationDelta * rotationAlpha,
     vx,
     vy,
+    rawCx: measured.cx,
+    rawCy: measured.cy,
     lastMeasurementAt: measurementAt,
   };
 }
 
 function predictPose(current: FilteredPose, now: number): FacePose {
-  const ageMs = clamp(now - current.lastMeasurementAt, 0, MAX_PREDICTION_MS);
+  const normalizedSpeed = Math.hypot(
+    current.vx / Math.max(1, current.width),
+    current.vy / Math.max(1, current.height),
+  );
+
+  // No extrapolation at low speed. Previously, tiny noisy velocity was
+  // projected forward and was the main source of visible micro-shaking.
+  const predictionEnabled =
+    normalizedSpeed >= PREDICTION_MIN_SPEED_RATIO_PER_MS;
+
+  const ageMs = predictionEnabled
+    ? clamp(now - current.lastMeasurementAt, 0, MAX_PREDICTION_MS)
+    : 0;
 
   let dx = current.vx * ageMs;
   let dy = current.vy * ageMs;
@@ -325,10 +415,11 @@ function predictPose(current: FilteredPose, now: number): FacePose {
   dy = clamp(dy, -maxDy, maxDy);
 
   return {
-    cx: current.cx + dx,
-    cy: current.cy + dy,
-    width: current.width,
-    height: current.height,
+    // Pixel snapping removes sub-pixel anti-alias shimmer on the mask edge.
+    cx: Math.round(current.cx + dx),
+    cy: Math.round(current.cy + dy),
+    width: Math.round(current.width * 2) / 2,
+    height: Math.round(current.height * 2) / 2,
     rotation: current.rotation,
   };
 }
