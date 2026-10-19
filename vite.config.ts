@@ -1,4 +1,4 @@
-import { defineConfig } from 'vite';
+﻿import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 
 const vdev2Proxy = {
@@ -27,10 +27,11 @@ export default defineConfig({
   },
   preview: {
     host: '0.0.0.0',
-    allowedHosts: ['telemedicine-front-production.up.railway.app'],
+    allowedHosts: ['telemedicine-front-production.up.railway.app', 'video-town-front-production.up.railway.app'],
     proxy: {
       '/api/vdev2': vdev2Proxy,
       '/api/main': mainProxy,
     },
   },
 });
+

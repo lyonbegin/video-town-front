@@ -1,4 +1,4 @@
-import { defineConfig } from 'vite';
+﻿import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 var vdev2Proxy = {
     target: 'http://127.0.0.1:9091',
@@ -24,10 +24,11 @@ export default defineConfig({
     },
     preview: {
         host: '0.0.0.0',
-        allowedHosts: ['telemedicine-front-production.up.railway.app'],
+        allowedHosts: ['telemedicine-front-production.up.railway.app', 'video-town-front-production.up.railway.app'],
         proxy: {
             '/api/vdev2': vdev2Proxy,
             '/api/main': mainProxy,
         },
     },
 });
+
