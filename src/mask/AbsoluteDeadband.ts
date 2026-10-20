@@ -4,21 +4,24 @@ export interface AbsoluteDeadbandStatus {
 }
 
 const MIN_THRESHOLD = 0;
-const MAX_THRESHOLD = 0.02;
+const MAX_THRESHOLD = 30;
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
 }
 
 /**
- * Simple absolute deadband.
+ * Simple absolute screen-space deadband.
  *
- * For each landmark, compare the current x/y/z values with the last values
- * actually sent downstream. If all three absolute differences are within the
- * threshold, keep the previous output exactly. Otherwise replace the held
- * point with the current one.
+ * Threshold is expressed in pixels, not normalized landmark units.
+ * For each landmark, compare the current X/Y position with the last position
+ * actually sent downstream. If both absolute screen-space differences stay
+ * inside the threshold, hold the complete previous X/Y/Z point exactly.
  *
- * There is no learning, MAD, interpolation, hysteresis or moving state.
+ * Z is deliberately not used to trigger an update. Face depth values can carry
+ * noticeably more tracker noise than screen-space X/Y and previously caused
+ * almost every point to escape the deadband even when the visible point barely
+ * moved.
  */
 export class AbsoluteLandmarkDeadband {
   private held: number[][] = [];
@@ -50,7 +53,11 @@ export class AbsoluteLandmarkDeadband {
     return this.threshold;
   }
 
-  apply(points: number[][]) {
+  apply(
+    points: number[][],
+    imageWidth: number,
+    imageHeight: number,
+  ) {
     if (this.held.length !== points.length) {
       this.held = points.map((point) => [
         point[0],
@@ -62,6 +69,8 @@ export class AbsoluteLandmarkDeadband {
       return this.held;
     }
 
+    const width = Math.max(1, imageWidth);
+    const height = Math.max(1, imageHeight);
     const output = new Array<number[]>(points.length);
     let heldCount = 0;
 
@@ -69,14 +78,14 @@ export class AbsoluteLandmarkDeadband {
       const current = points[i];
       const previous = this.held[i];
 
-      const dx = Math.abs(current[0] - previous[0]);
-      const dy = Math.abs(current[1] - previous[1]);
-      const dz = Math.abs(current[2] - previous[2]);
+      const dxPx =
+        Math.abs(current[0] - previous[0]) * width;
+      const dyPx =
+        Math.abs(current[1] - previous[1]) * height;
 
       if (
-        dx <= this.threshold &&
-        dy <= this.threshold &&
-        dz <= this.threshold
+        dxPx <= this.threshold &&
+        dyPx <= this.threshold
       ) {
         output[i] = previous;
         heldCount++;
