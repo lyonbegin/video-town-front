@@ -340,13 +340,14 @@ export default function DeviceCheck({
               </div>
 
               <p className="muted-text">
-                MediaPipe Face Effect 방식과 같은 Relative Velocity smoothing을
-                얼굴 landmark 단계에 먼저 적용한 뒤, 그 동일한 좌표로
-                MindAR의 pose와 face geometry를 함께 계산합니다.
+                Relative Velocity smoothing 뒤에 각 landmark의 최근 변화량을
+                rolling median/MAD로 학습하는 adaptive deadband를 적용합니다.
+                학습된 오차범위 안의 미세한 변화는 이전 좌표를 유지하고,
+                범위를 벗어나 실제 움직임으로 판단되면 즉시 통과시킵니다.
               </p>
 
               <div className="preview-badge">
-                Relative Velocity · window 5 · velocity scale 20
+                Relative Velocity · window 5 · velocity scale 20 · adaptive MAD deadband
               </div>
 
               <div className="device-grid">
@@ -369,6 +370,30 @@ export default function DeviceCheck({
                     value={
                       trackingStatus
                         ? trackingStatus.frameIntervalMs.toFixed(1)
+                        : '-'
+                    }
+                  />
+                </label>
+
+                <label>
+                  <span>현재 deadband 유지율(%)</span>
+                  <input
+                    readOnly
+                    value={
+                      trackingStatus
+                        ? (trackingStatus.deadbandHoldRatio * 100).toFixed(1)
+                        : '-'
+                    }
+                  />
+                </label>
+
+                <label>
+                  <span>평균 noise radius</span>
+                  <input
+                    readOnly
+                    value={
+                      trackingStatus
+                        ? trackingStatus.deadbandNoiseRadius.toFixed(6)
                         : '-'
                     }
                   />
