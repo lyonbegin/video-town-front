@@ -60,7 +60,7 @@ const DEFAULT_ONE_EURO_BETA = 4.0;
 // Fixed per-landmark 3D deadband for mesh deformation.
 // Pixel-equivalent distance:
 // sqrt((dx*width)^2 + (dy*height)^2 + (dz*width)^2)
-const POINT_DEADBAND_3D_PX = 2.0;
+const POINT_DEADBAND_3D_PX = 1.5;
 
 export interface MaskedCameraController {
   stream: MediaStream;
