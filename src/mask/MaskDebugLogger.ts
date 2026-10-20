@@ -128,7 +128,6 @@ export class MaskDebugLogger {
             sessionId: this.sessionId,
             records,
           }),
-          keepalive: true,
         },
       );
 
@@ -211,7 +210,6 @@ export class MaskDebugLogger {
             'application/json',
         },
         body,
-        keepalive: true,
       },
     );
   }
