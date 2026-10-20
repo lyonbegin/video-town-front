@@ -39,6 +39,12 @@ export default function DeviceCheck({
     useState(DEFAULT_GLOBAL_THRESHOLD_PX);
   const [verificationHz, setVerificationHz] =
     useState(DEFAULT_GATE_VERIFICATION_HZ);
+  const [debugSession, setDebugSession] =
+    useState<{
+      sessionId: string;
+      downloadUrl: string;
+      startedAt: string;
+    } | null>(null);
 
   useEffect(() => {
     if (previewRef.current) {
@@ -129,6 +135,7 @@ export default function DeviceCheck({
     setBusy(true);
     setError('');
     setTrackingStatus(null);
+    setDebugSession(null);
 
     try {
       maskControllerRef.current?.stop();
@@ -177,6 +184,7 @@ export default function DeviceCheck({
           );
           outgoing = controller.stream;
           setTrackingStatus(controller.getTrackingStatus());
+          setDebugSession(controller.getDebugSession());
         } catch (maskError) {
           raw.getTracks().forEach((track) => track.stop());
           throw maskError;
@@ -415,6 +423,45 @@ export default function DeviceCheck({
                 검증 횟수를 낮추면 변화 판정 자체를 덜 자주 하므로 정지 안정성은 높아지지만
                 움직임 반영 간격도 길어집니다.
               </p>
+
+              <div className="section-kicker">
+                진단 로그
+              </div>
+
+              <p className="muted-text">
+                복면 카메라가 켜진 동안 raw 468 좌표, smoothing 후 468 좌표,
+                핵심 20개 포인트별 이동량, gate 판정, estimator 결과,
+                faceMatrix와 처리시간을 시간순으로 Railway 로그 파일에 자동 기록합니다.
+              </p>
+
+              {debugSession && (
+                <div className="device-grid">
+                  <label>
+                    <span>진단 세션 ID</span>
+                    <input
+                      readOnly
+                      value={debugSession.sessionId}
+                    />
+                  </label>
+
+                  <label>
+                    <span>로그 시작 시각</span>
+                    <input
+                      readOnly
+                      value={debugSession.startedAt}
+                    />
+                  </label>
+
+                  <a
+                    className="primary-button"
+                    href={debugSession.downloadUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    진단 로그 다운로드
+                  </a>
+                </div>
+              )}
 
               <div className="device-grid">
                 <label>
