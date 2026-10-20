@@ -1,6 +1,7 @@
 export interface MaskDebugSessionInfo {
   sessionId: string;
   downloadUrl: string;
+  summaryUrl: string;
   startedAt: string;
 }
 
@@ -40,6 +41,8 @@ export class MaskDebugLogger {
   private readonly startedAt = new Date().toISOString();
   private readonly downloadUrl =
     `/__mask-debug/session/${this.sessionId}.ndjson`;
+  private readonly summaryUrl =
+    `/__mask-debug/session/${this.sessionId}/summary.json`;
 
   private queue: DebugRecord[] = [];
   private sequence = 0;
@@ -62,6 +65,7 @@ export class MaskDebugLogger {
     return {
       sessionId: this.sessionId,
       downloadUrl: this.downloadUrl,
+      summaryUrl: this.summaryUrl,
       startedAt: this.startedAt,
     };
   }

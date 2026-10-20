@@ -57,7 +57,11 @@ function sendJson(
   status,
   value,
 ) {
-  const body = JSON.stringify(value);
+  const body = JSON.stringify(
+    value,
+    null,
+    2,
+  );
 
   res.writeHead(status, {
     'content-type':
@@ -211,6 +215,558 @@ async function handleDebugPost(
   }
 }
 
+async function loadRecords(sessionId) {
+  const filePath =
+    getLogPath(sessionId);
+
+  if (!existsSync(filePath)) {
+    return null;
+  }
+
+  const text =
+    await readFile(
+      filePath,
+      'utf8',
+    );
+
+  const records = [];
+
+  for (
+    const line of
+    text.split('\n')
+  ) {
+    if (!line.trim()) {
+      continue;
+    }
+
+    try {
+      records.push(
+        JSON.parse(line),
+      );
+    } catch {
+      // Keep the rest of the session analyzable if one line is incomplete.
+    }
+  }
+
+  return records;
+}
+
+function mean(values) {
+  if (values.length === 0) {
+    return 0;
+  }
+
+  return (
+    values.reduce(
+      (sum, value) =>
+        sum + value,
+      0,
+    ) / values.length
+  );
+}
+
+function minValue(values) {
+  return values.length
+    ? Math.min(...values)
+    : 0;
+}
+
+function maxValue(values) {
+  return values.length
+    ? Math.max(...values)
+    : 0;
+}
+
+function buildDiagnosticSummary(
+  sessionId,
+  records,
+) {
+  const evaluations =
+    records.filter(
+      (record) =>
+        record?.type ===
+          'gate_evaluation' &&
+        record?.data?.gate,
+    );
+
+  const tuningEvents =
+    records.filter(
+      (record) =>
+        record?.type ===
+        'auto_tune',
+    );
+
+  if (
+    evaluations.length === 0
+  ) {
+    return {
+      sessionId,
+      evaluationCount: 0,
+      diagnosis: [
+        'NO_GATE_EVALUATIONS',
+      ],
+    };
+  }
+
+  const first =
+    evaluations[0];
+
+  const last =
+    evaluations[
+      evaluations.length - 1
+    ];
+
+  const durationSeconds =
+    Math.max(
+      0.001,
+      (
+        Number(last.perfMs) -
+        Number(first.perfMs)
+      ) / 1000,
+    );
+
+  let acceptedCount = 0;
+  let staticCount = 0;
+  let staticAcceptedCount = 0;
+  let expressionEventCount = 0;
+  let expressionCapturedCount = 0;
+  let rigidEventCount = 0;
+  let rigidCapturedCount = 0;
+
+  const reasons = {};
+  const thresholds = [];
+  const expressionThresholds = [];
+  const noiseFloors = [];
+  const expressionNoiseFloors = [];
+  const trackerFpsValues = [];
+  const rigidSignals = [];
+  const expressionSignals = [];
+  const suppressedRigidSignals = [];
+
+  for (
+    const record of
+    evaluations
+  ) {
+    const data =
+      record.data || {};
+
+    const gate =
+      data.gate || {};
+
+    const accepted =
+      Boolean(gate.accepted);
+
+    if (accepted) {
+      acceptedCount++;
+    }
+
+    const reason =
+      String(
+        gate.decisionReason ||
+        'unknown',
+      );
+
+    reasons[reason] =
+      (reasons[reason] || 0) + 1;
+
+    const threshold =
+      Number(
+        gate.decisionThresholdPx ??
+        gate.thresholdPx ??
+        0,
+      );
+
+    const expressionThreshold =
+      Number(
+        gate.decisionExpressionThresholdPx ??
+        gate.expressionThresholdPx ??
+        0,
+      );
+
+    const rigidSignal =
+      Number(
+        gate.rigidSignalPx || 0,
+      );
+
+    const expressionSignal =
+      Number(
+        gate.expressionSignalPx || 0,
+      );
+
+    thresholds.push(
+      Number(gate.thresholdPx || 0),
+    );
+
+    expressionThresholds.push(
+      Number(
+        gate.expressionThresholdPx ||
+        0,
+      ),
+    );
+
+    noiseFloors.push(
+      Number(
+        gate.noiseFloorPx || 0,
+      ),
+    );
+
+    expressionNoiseFloors.push(
+      Number(
+        gate.expressionNoiseFloorPx ||
+        0,
+      ),
+    );
+
+    rigidSignals.push(
+      rigidSignal,
+    );
+
+    expressionSignals.push(
+      expressionSignal,
+    );
+
+    if (
+      Number.isFinite(
+        Number(data.trackerFps),
+      )
+    ) {
+      trackerFpsValues.push(
+        Number(data.trackerFps),
+      );
+    }
+
+    if (gate.staticLikely) {
+      staticCount++;
+
+      if (accepted) {
+        staticAcceptedCount++;
+      } else {
+        suppressedRigidSignals.push(
+          rigidSignal,
+        );
+      }
+    }
+
+    const expressionEvent =
+      expressionSignal >=
+      expressionThreshold;
+
+    if (expressionEvent) {
+      expressionEventCount++;
+
+      if (accepted) {
+        expressionCapturedCount++;
+      }
+    }
+
+    const rigidEvent =
+      rigidSignal >= threshold;
+
+    if (rigidEvent) {
+      rigidEventCount++;
+
+      if (accepted) {
+        rigidCapturedCount++;
+      }
+    }
+  }
+
+  const requestedVerificationHz =
+    Number(
+      last.data?.gate
+        ?.verificationHz || 0,
+    );
+
+  const trackerFpsMean =
+    mean(
+      trackerFpsValues,
+    );
+
+  const possibleEvaluationHz =
+    Math.min(
+      requestedVerificationHz ||
+        Number.POSITIVE_INFINITY,
+      trackerFpsMean ||
+        Number.POSITIVE_INFINITY,
+    );
+
+  const actualEvaluationHz =
+    evaluations.length /
+    durationSeconds;
+
+  const outputUpdateHz =
+    acceptedCount /
+    durationSeconds;
+
+  const staticFalseAcceptRate =
+    staticCount > 0
+      ? staticAcceptedCount /
+        staticCount
+      : 0;
+
+  const expressionCaptureRate =
+    expressionEventCount > 0
+      ? expressionCapturedCount /
+        expressionEventCount
+      : 1;
+
+  const rigidCaptureRate =
+    rigidEventCount > 0
+      ? rigidCapturedCount /
+        rigidEventCount
+      : 1;
+
+  const lastGate =
+    last.data?.gate || {};
+
+  const diagnosis = [];
+
+  if (
+    evaluations.length < 20
+  ) {
+    diagnosis.push(
+      'SHORT_SESSION',
+    );
+  }
+
+  if (
+    Number(
+      lastGate
+        .autoTuneConfidence || 0,
+    ) < 0.6
+  ) {
+    diagnosis.push(
+      'TUNING_STILL_LEARNING',
+    );
+  }
+
+  if (
+    staticCount >= 5 &&
+    staticFalseAcceptRate > 0.1
+  ) {
+    diagnosis.push(
+      'STATIC_FALSE_ACCEPT_HIGH',
+    );
+  }
+
+  if (
+    expressionEventCount >= 3 &&
+    expressionCaptureRate < 0.98
+  ) {
+    diagnosis.push(
+      'EXPRESSION_CAPTURE_LOW',
+    );
+  }
+
+  if (
+    Number.isFinite(
+      possibleEvaluationHz,
+    ) &&
+    possibleEvaluationHz > 0 &&
+    actualEvaluationHz <
+      possibleEvaluationHz * 0.75
+  ) {
+    diagnosis.push(
+      'VERIFICATION_RATE_LOW',
+    );
+  }
+
+  if (
+    outputUpdateHz > 8 &&
+    staticFalseAcceptRate > 0.1
+  ) {
+    diagnosis.push(
+      'OUTPUT_UPDATE_RATE_HIGH',
+    );
+  }
+
+  if (
+    diagnosis.length === 0
+  ) {
+    diagnosis.push(
+      'NO_OBVIOUS_GATE_FAILURE',
+    );
+  }
+
+  return {
+    sessionId,
+    durationSeconds,
+    evaluationCount:
+      evaluations.length,
+    autoTuneEventCount:
+      tuningEvents.length,
+    acceptedCount,
+    acceptanceRate:
+      acceptedCount /
+      evaluations.length,
+    actualEvaluationHz,
+    requestedVerificationHz,
+    trackerFpsMean,
+    outputUpdateHz,
+    reasons,
+    static: {
+      sampleCount: staticCount,
+      acceptedCount:
+        staticAcceptedCount,
+      falseAcceptRate:
+        staticFalseAcceptRate,
+      meanSuppressedRigidSignalPx:
+        mean(
+          suppressedRigidSignals,
+        ),
+    },
+    expression: {
+      eventCount:
+        expressionEventCount,
+      capturedCount:
+        expressionCapturedCount,
+      captureRate:
+        expressionCaptureRate,
+      signalMeanPx:
+        mean(
+          expressionSignals,
+        ),
+      signalMaxPx:
+        maxValue(
+          expressionSignals,
+        ),
+    },
+    rigidMotion: {
+      eventCount:
+        rigidEventCount,
+      capturedCount:
+        rigidCapturedCount,
+      captureRate:
+        rigidCaptureRate,
+      signalMeanPx:
+        mean(
+          rigidSignals,
+        ),
+      signalMaxPx:
+        maxValue(
+          rigidSignals,
+        ),
+    },
+    threshold: {
+      startPx:
+        thresholds[0] || 0,
+      endPx:
+        thresholds[
+          thresholds.length - 1
+        ] || 0,
+      minPx:
+        minValue(thresholds),
+      maxPx:
+        maxValue(thresholds),
+      targetEndPx:
+        Number(
+          lastGate
+            .targetThresholdPx || 0,
+        ),
+      noiseFloorEndPx:
+        Number(
+          lastGate
+            .noiseFloorPx || 0,
+        ),
+    },
+    expressionThreshold: {
+      startPx:
+        expressionThresholds[0] ||
+        0,
+      endPx:
+        expressionThresholds[
+          expressionThresholds.length -
+            1
+        ] || 0,
+      minPx:
+        minValue(
+          expressionThresholds,
+        ),
+      maxPx:
+        maxValue(
+          expressionThresholds,
+        ),
+      targetEndPx:
+        Number(
+          lastGate
+            .targetExpressionThresholdPx ||
+          0,
+        ),
+      noiseFloorEndPx:
+        Number(
+          lastGate
+            .expressionNoiseFloorPx ||
+          0,
+        ),
+    },
+    autoTune: {
+      enabled:
+        Boolean(
+          lastGate
+            .autoTuningEnabled,
+        ),
+      confidence:
+        Number(
+          lastGate
+            .autoTuneConfidence || 0,
+        ),
+      staticAcceptRate:
+        Number(
+          lastGate
+            .staticAcceptRate || 0,
+        ),
+      outputUpdateRate:
+        Number(
+          lastGate
+            .outputUpdateRate || 0,
+        ),
+    },
+    diagnosis,
+  };
+}
+
+async function handleDebugSummary(
+  pathname,
+  res,
+) {
+  const match =
+    pathname.match(
+      /^\/__mask-debug\/session\/([A-Za-z0-9_-]{16,80})\/summary\.json$/,
+    );
+
+  if (!match) {
+    return false;
+  }
+
+  const sessionId =
+    match[1];
+
+  const records =
+    await loadRecords(
+      sessionId,
+    );
+
+  if (!records) {
+    sendJson(res, 404, {
+      ok: false,
+      error:
+        'debug session not found',
+    });
+    return true;
+  }
+
+  sendJson(
+    res,
+    200,
+    buildDiagnosticSummary(
+      sessionId,
+      records,
+    ),
+  );
+
+  return true;
+}
+
 async function handleDebugDownload(
   pathname,
   res,
@@ -343,6 +899,8 @@ const server =
         sendJson(res, 200, {
           ok: true,
           storage: LOG_DIR,
+          summaryEndpoint:
+            '/__mask-debug/session/<sessionId>/summary.json',
         });
         return;
       }
@@ -360,6 +918,15 @@ const server =
       }
 
       if (req.method === 'GET') {
+        if (
+          await handleDebugSummary(
+            url.pathname,
+            res,
+          )
+        ) {
+          return;
+        }
+
         if (
           await handleDebugDownload(
             url.pathname,

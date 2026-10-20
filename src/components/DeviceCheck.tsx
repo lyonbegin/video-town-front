@@ -39,10 +39,13 @@ export default function DeviceCheck({
     useState(DEFAULT_GLOBAL_THRESHOLD_PX);
   const [verificationHz, setVerificationHz] =
     useState(DEFAULT_GATE_VERIFICATION_HZ);
+  const [autoTuningEnabled, setAutoTuningEnabled] =
+    useState(true);
   const [debugSession, setDebugSession] =
     useState<{
       sessionId: string;
       downloadUrl: string;
+      summaryUrl: string;
       startedAt: string;
     } | null>(null);
 
@@ -181,6 +184,9 @@ export default function DeviceCheck({
           );
           controller.setVerificationHz(
             verificationHz,
+          );
+          controller.setAutoTuningEnabled(
+            autoTuningEnabled,
           );
           outgoing = controller.stream;
           setTrackingStatus(controller.getTrackingStatus());
@@ -360,19 +366,40 @@ export default function DeviceCheck({
               </div>
 
               <p className="muted-text">
-                468개 landmark를 각각 통과시키지 않습니다. 얼굴 전체에서 선택한
-                핵심 landmark 20개만 검사하고, 그중 3개 이상이 threshold를 넘을 때만
-                현재 468개 전체 좌표를 한 번에 적용합니다. 조건을 만족하지 않으면
-                estimator, pose, geometry를 전부 갱신하지 않고 이전 얼굴을 그대로 유지합니다.
+                실시간 로그와 동일한 측정값으로 자동 튜닝합니다. 안정적인 얼굴 기준점의
+                frame-to-frame 노이즈를 계속 학습해 전체 움직임 threshold를 수렴시키고,
+                입·눈썹·턱의 상대 변형은 별도 expression threshold로 통과시켜 표정 변화가
+                전체 안정화 threshold 때문에 막히지 않도록 분리했습니다.
               </p>
 
               <div className="preview-badge">
-                20 core landmarks · 3-point global gate · whole-frame hold
+                adaptive noise floor · rigid motion gate · expression bypass
               </div>
 
               <label>
                 <span>
-                  전체 변화 threshold · {globalThresholdPx.toFixed(2)} px
+                  자동 threshold 튜닝 · {autoTuningEnabled ? 'ON' : 'OFF'}
+                </span>
+                <input
+                  type="checkbox"
+                  checked={autoTuningEnabled}
+                  onChange={(e) => {
+                    const enabled = e.target.checked;
+                    setAutoTuningEnabled(enabled);
+                    maskControllerRef.current
+                      ?.setAutoTuningEnabled(enabled);
+                    setTrackingStatus(
+                      maskControllerRef.current
+                        ?.getTrackingStatus() ?? null,
+                    );
+                  }}
+                  disabled={busy || ready}
+                />
+              </label>
+
+              <label>
+                <span>
+                  수동 전체 threshold · {globalThresholdPx.toFixed(2)} px
                 </span>
                 <input
                   type="range"
@@ -390,7 +417,7 @@ export default function DeviceCheck({
                         ?.getTrackingStatus() ?? null,
                     );
                   }}
-                  disabled={busy || ready}
+                  disabled={busy || ready || autoTuningEnabled}
                 />
               </label>
 
@@ -419,9 +446,9 @@ export default function DeviceCheck({
               </label>
 
               <p className="muted-text">
-                threshold를 크게 할수록 얼굴 전체가 더 강하게 고정됩니다.
-                검증 횟수를 낮추면 변화 판정 자체를 덜 자주 하므로 정지 안정성은 높아지지만
-                움직임 반영 간격도 길어집니다.
+                자동 튜닝 ON에서는 수동 threshold를 사용하지 않고, 측정된 noise floor와
+                정지 상태 오검출률을 이용해 threshold가 계속 올라가거나 내려갑니다.
+                표정 변화는 별도 expression threshold로 판정합니다.
               </p>
 
               <div className="section-kicker">
@@ -460,6 +487,15 @@ export default function DeviceCheck({
                   >
                     진단 로그 다운로드
                   </a>
+
+                  <a
+                    className="primary-button"
+                    href={debugSession.summaryUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    자동 분석 요약 보기
+                  </a>
                 </div>
               )}
 
@@ -477,63 +513,133 @@ export default function DeviceCheck({
                 </label>
 
                 <label>
-                  <span>추적 프레임 간격(ms)</span>
+                  <span>현재 자동 threshold</span>
                   <input
                     readOnly
                     value={
                       trackingStatus
-                        ? trackingStatus.frameIntervalMs.toFixed(1)
+                        ? `${trackingStatus.globalThresholdPx.toFixed(2)} px`
                         : '-'
                     }
                   />
                 </label>
 
                 <label>
-                  <span>현재 전체 threshold</span>
+                  <span>목표 threshold</span>
                   <input
                     readOnly
                     value={
                       trackingStatus
-                        ? `${trackingStatus.globalThresholdPx.toFixed(2)} px`
-                        : `${globalThresholdPx.toFixed(2)} px`
+                        ? `${trackingStatus.targetThresholdPx.toFixed(2)} px`
+                        : '-'
                     }
                   />
                 </label>
 
                 <label>
-                  <span>현재 검증 횟수</span>
+                  <span>noise floor</span>
+                  <input
+                    readOnly
+                    value={
+                      trackingStatus
+                        ? `${trackingStatus.noiseFloorPx.toFixed(2)} px`
+                        : '-'
+                    }
+                  />
+                </label>
+
+                <label>
+                  <span>표정 threshold</span>
+                  <input
+                    readOnly
+                    value={
+                      trackingStatus
+                        ? `${trackingStatus.expressionThresholdPx.toFixed(2)} px`
+                        : '-'
+                    }
+                  />
+                </label>
+
+                <label>
+                  <span>표정 signal</span>
+                  <input
+                    readOnly
+                    value={
+                      trackingStatus
+                        ? `${trackingStatus.expressionSignalPx.toFixed(2)} px`
+                        : '-'
+                    }
+                  />
+                </label>
+
+                <label>
+                  <span>전체 움직임 signal</span>
+                  <input
+                    readOnly
+                    value={
+                      trackingStatus
+                        ? `${trackingStatus.rigidSignalPx.toFixed(2)} px`
+                        : '-'
+                    }
+                  />
+                </label>
+
+                <label>
+                  <span>자동학습 진행률</span>
+                  <input
+                    readOnly
+                    value={
+                      trackingStatus
+                        ? `${(trackingStatus.autoTuneConfidence * 100).toFixed(0)}%`
+                        : '-'
+                    }
+                  />
+                </label>
+
+                <label>
+                  <span>정지 오적용률</span>
+                  <input
+                    readOnly
+                    value={
+                      trackingStatus
+                        ? `${(trackingStatus.staticAcceptRate * 100).toFixed(1)}%`
+                        : '-'
+                    }
+                  />
+                </label>
+
+                <label>
+                  <span>전체 갱신률</span>
+                  <input
+                    readOnly
+                    value={
+                      trackingStatus
+                        ? `${(trackingStatus.outputUpdateRate * 100).toFixed(1)}%`
+                        : '-'
+                    }
+                  />
+                </label>
+
+                <label>
+                  <span>현재 판정</span>
+                  <input
+                    readOnly
+                    value={
+                      trackingStatus
+                        ? `${trackingStatus.gateAccepted ? '적용' : '고정'} / ${trackingStatus.gateReason}`
+                        : '-'
+                    }
+                  />
+                </label>
+
+                <label>
+                  <span>검증 설정</span>
                   <input
                     readOnly
                     value={
                       trackingStatus
                         ? `${trackingStatus.verificationHz.toFixed(0)} 회/초`
                         : `${verificationHz.toFixed(0)} 회/초`
-                    }
-                  />
-                </label>
-
-                <label>
-                  <span>threshold 초과 핵심점</span>
-                  <input
-                    readOnly
-                    value={
-                      trackingStatus
-                        ? `${trackingStatus.movedCorePoints} / 20`
-                        : '-'
-                    }
-                  />
-                </label>
-
-                <label>
-                  <span>전체 좌표 적용 여부</span>
-                  <input
-                    readOnly
-                    value={
-                      trackingStatus
-                        ? trackingStatus.gateAccepted
-                          ? '적용'
-                          : '고정'
-                        : '-'
                     }
                   />
                 </label>

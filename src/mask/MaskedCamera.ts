@@ -1,6 +1,8 @@
 import {
   CORE_LANDMARK_INDICES,
+  EXPRESSION_LANDMARK_INDICES,
   GlobalLandmarkGate,
+  RIGID_LANDMARK_INDICES,
 } from './GlobalLandmarkGate';
 import {
   MaskDebugLogger,
@@ -16,13 +18,27 @@ export interface TrackingStatus {
   windowSize: number;
   velocityScale: number;
   globalThresholdPx: number;
+  expressionThresholdPx: number;
+  targetThresholdPx: number;
+  targetExpressionThresholdPx: number;
   verificationHz: number;
-  movedCorePoints: number;
-  requiredMovedCorePoints: number;
   gateAccepted: boolean;
+  gateReason: string;
+  rigidSignalPx: number;
+  expressionSignalPx: number;
+  frameRigidMotionPx: number;
+  frameExpressionMotionPx: number;
+  noiseFloorPx: number;
+  expressionNoiseFloorPx: number;
+  autoTuningEnabled: boolean;
+  autoTuneConfidence: number;
+  staticAcceptRate: number;
+  outputUpdateRate: number;
+  timeSinceLastAcceptMs: number;
 }
 
 export const DEFAULT_GLOBAL_THRESHOLD_PX = 3.0;
+export const DEFAULT_EXPRESSION_THRESHOLD_PX = 1.5;
 export const DEFAULT_GATE_VERIFICATION_HZ = 15;
 
 export interface MaskedCameraController {
@@ -30,6 +46,7 @@ export interface MaskedCameraController {
   stop: () => void;
   setGlobalThresholdPx: (threshold: number) => void;
   setVerificationHz: (hz: number) => void;
+  setAutoTuningEnabled: (enabled: boolean) => void;
   getTrackingStatus: () => TrackingStatus;
   getDebugSession: () => MaskDebugSessionInfo;
 }
@@ -647,11 +664,21 @@ export async function createMaskedCameraStream(
             DEFAULT_GLOBAL_THRESHOLD_PX,
           verificationHz:
             DEFAULT_GATE_VERIFICATION_HZ,
-          requiredMovedCorePoints: 3,
+          initialExpressionThresholdPx:
+            DEFAULT_EXPRESSION_THRESHOLD_PX,
           coreLandmarkIndices:
             Array.from(
               CORE_LANDMARK_INDICES,
             ),
+          rigidLandmarkIndices:
+            Array.from(
+              RIGID_LANDMARK_INDICES,
+            ),
+          expressionLandmarkIndices:
+            Array.from(
+              EXPRESSION_LANDMARK_INDICES,
+            ),
+          autoTuning: true,
         },
       });
 
@@ -667,6 +694,7 @@ export async function createMaskedCameraStream(
       new GlobalLandmarkGate(
         DEFAULT_GLOBAL_THRESHOLD_PX,
         DEFAULT_GATE_VERIFICATION_HZ,
+        DEFAULT_EXPRESSION_THRESHOLD_PX,
       );
 
     const flipped =
@@ -876,6 +904,21 @@ export async function createMaskedCameraStream(
           }
 
           if (gateResult.evaluated) {
+            if (gateResult.tuning.changed) {
+              debugLogger?.log(
+                'auto_tune',
+                {
+                  frameIndex:
+                    trackingFrameIndex,
+                  tuning:
+                    gateResult.tuning,
+                  gate:
+                    globalGate.getStatus(),
+                },
+                now,
+              );
+            }
+
             debugLogger?.log(
               'gate_evaluation',
               {
@@ -904,6 +947,8 @@ export async function createMaskedCameraStream(
                     gateResult.firstFrame,
                   coreMeasurements:
                     gateResult.coreMeasurements,
+                  tuning:
+                    gateResult.tuning,
                 },
                 appliedEstimate,
                 currentOutputEstimate:
@@ -1073,14 +1118,40 @@ export async function createMaskedCameraStream(
           VELOCITY_FILTER_SCALE,
         globalThresholdPx:
           globalGate.getStatus().thresholdPx,
+        expressionThresholdPx:
+          globalGate.getStatus().expressionThresholdPx,
+        targetThresholdPx:
+          globalGate.getStatus().targetThresholdPx,
+        targetExpressionThresholdPx:
+          globalGate.getStatus().targetExpressionThresholdPx,
         verificationHz:
           globalGate.getStatus().verificationHz,
-        movedCorePoints:
-          globalGate.getStatus().movedCorePoints,
-        requiredMovedCorePoints:
-          globalGate.getStatus().requiredMovedCorePoints,
         gateAccepted:
           globalGate.getStatus().accepted,
+        gateReason:
+          globalGate.getStatus().decisionReason,
+        rigidSignalPx:
+          globalGate.getStatus().rigidSignalPx,
+        expressionSignalPx:
+          globalGate.getStatus().expressionSignalPx,
+        frameRigidMotionPx:
+          globalGate.getStatus().frameRigidMotionPx,
+        frameExpressionMotionPx:
+          globalGate.getStatus().frameExpressionMotionPx,
+        noiseFloorPx:
+          globalGate.getStatus().noiseFloorPx,
+        expressionNoiseFloorPx:
+          globalGate.getStatus().expressionNoiseFloorPx,
+        autoTuningEnabled:
+          globalGate.getStatus().autoTuningEnabled,
+        autoTuneConfidence:
+          globalGate.getStatus().autoTuneConfidence,
+        staticAcceptRate:
+          globalGate.getStatus().staticAcceptRate,
+        outputUpdateRate:
+          globalGate.getStatus().outputUpdateRate,
+        timeSinceLastAcceptMs:
+          globalGate.getStatus().timeSinceLastAcceptMs,
       });
 
     const setGlobalThresholdPx = (
@@ -1119,6 +1190,34 @@ export async function createMaskedCameraStream(
           verificationHz:
             globalGate.getStatus()
               .verificationHz,
+          autoTuningEnabled:
+            globalGate.getStatus()
+              .autoTuningEnabled,
+        },
+      );
+    };
+
+    const setAutoTuningEnabled = (
+      enabled: boolean,
+    ) => {
+      globalGate.setAutoTuningEnabled(
+        enabled,
+      );
+
+      debugLogger?.log(
+        'config_change',
+        {
+          globalThresholdPx:
+            globalGate.getStatus()
+              .thresholdPx,
+          expressionThresholdPx:
+            globalGate.getStatus()
+              .expressionThresholdPx,
+          verificationHz:
+            globalGate.getStatus()
+              .verificationHz,
+          autoTuningEnabled:
+            enabled,
         },
       );
     };
@@ -1191,6 +1290,7 @@ export async function createMaskedCameraStream(
       stop,
       setGlobalThresholdPx,
       setVerificationHz,
+      setAutoTuningEnabled,
       getTrackingStatus,
       getDebugSession,
     };
