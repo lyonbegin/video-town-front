@@ -296,6 +296,13 @@ function buildDiagnosticSummary(
         'auto_tune',
     );
 
+  const convergenceEvents =
+    records.filter(
+      (record) =>
+        record?.type ===
+        'calibration_converged',
+    );
+
   if (
     evaluations.length === 0
   ) {
@@ -677,6 +684,14 @@ function buildDiagnosticSummary(
       evaluations.length,
     autoTuneEventCount:
       tuningEvents.length,
+    calibrationConverged:
+      convergenceEvents.length > 0,
+    calibration:
+      convergenceEvents.length > 0
+        ? convergenceEvents[
+            convergenceEvents.length - 1
+          ]?.data?.calibration ?? null
+        : null,
     acceptedCount,
     acceptanceRate:
       acceptedCount /

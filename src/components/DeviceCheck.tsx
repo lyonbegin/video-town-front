@@ -179,12 +179,16 @@ export default function DeviceCheck({
           const controller = await createMaskedCameraStream(raw);
 
           maskControllerRef.current = controller;
-          controller.setGlobalThresholdPx(
-            globalThresholdPx,
-          );
+          if (!autoTuningEnabled) {
+            controller.setGlobalThresholdPx(
+              globalThresholdPx,
+            );
+          }
+
           controller.setVerificationHz(
             verificationHz,
           );
+
           controller.setAutoTuningEnabled(
             autoTuningEnabled,
           );
@@ -378,11 +382,22 @@ export default function DeviceCheck({
 
               <label>
                 <span>
-                  자동 threshold 튜닝 · {autoTuningEnabled ? 'ON' : 'OFF'}
+                  자동 threshold 튜닝 · {
+                    trackingStatus?.calibrationConverged
+                      ? '수렴 완료'
+                      : (trackingStatus?.autoTuningEnabled ?? autoTuningEnabled)
+                        ? 'ON'
+                        : 'OFF'
+                  }
                 </span>
                 <input
                   type="checkbox"
-                  checked={autoTuningEnabled}
+                  checked={
+                    trackingStatus?.calibrationConverged
+                      ? false
+                      : trackingStatus?.autoTuningEnabled ??
+                        autoTuningEnabled
+                  }
                   onChange={(e) => {
                     const enabled = e.target.checked;
                     setAutoTuningEnabled(enabled);
@@ -393,7 +408,13 @@ export default function DeviceCheck({
                         ?.getTrackingStatus() ?? null,
                     );
                   }}
-                  disabled={busy || ready}
+                  disabled={
+                    busy ||
+                    ready ||
+                    Boolean(
+                      trackingStatus?.calibrationConverged,
+                    )
+                  }
                 />
               </label>
 
@@ -446,9 +467,10 @@ export default function DeviceCheck({
               </label>
 
               <p className="muted-text">
-                자동 튜닝 ON에서는 수동 threshold를 사용하지 않고, 측정된 noise floor와
-                정지 상태 오검출률을 이용해 threshold가 계속 올라가거나 내려갑니다.
-                표정 변화는 별도 expression threshold로 판정합니다.
+                자동 튜닝은 매 영상통화마다 다시 시작합니다. 이전에 같은 카메라에서
+                수렴한 값이 있으면 그 값을 시작점으로 사용하고, 이번 통화 환경에서 다시
+                미세 조정합니다. 값이 수렴하면 자동 분석과 상세 로그를 즉시 중단하고
+                저장된 고정값만 사용합니다. 표정 변화는 별도 expression threshold로 판정합니다.
               </p>
 
               <div className="section-kicker">
@@ -585,12 +607,40 @@ export default function DeviceCheck({
                 </label>
 
                 <label>
-                  <span>자동학습 진행률</span>
+                  <span>자동학습 신뢰도</span>
                   <input
                     readOnly
                     value={
                       trackingStatus
                         ? `${(trackingStatus.autoTuneConfidence * 100).toFixed(0)}%`
+                        : '-'
+                    }
+                  />
+                </label>
+
+                <label>
+                  <span>threshold 수렴 진행</span>
+                  <input
+                    readOnly
+                    value={
+                      trackingStatus
+                        ? trackingStatus.calibrationConverged
+                          ? '100% / 고정값 사용'
+                          : `${(trackingStatus.convergenceProgress * 100).toFixed(0)}%`
+                        : '-'
+                    }
+                  />
+                </label>
+
+                <label>
+                  <span>초기값 출처</span>
+                  <input
+                    readOnly
+                    value={
+                      trackingStatus
+                        ? trackingStatus.calibrationSeedSource === 'saved'
+                          ? '이 카메라의 이전 수렴값'
+                          : '기본값'
                         : '-'
                     }
                   />

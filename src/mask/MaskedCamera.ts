@@ -32,6 +32,9 @@ export interface TrackingStatus {
   expressionNoiseFloorPx: number;
   autoTuningEnabled: boolean;
   autoTuneConfidence: number;
+  calibrationConverged: boolean;
+  convergenceProgress: number;
+  calibrationSeedSource: 'saved' | 'default';
   staticAcceptRate: number;
   outputUpdateRate: number;
   timeSinceLastAcceptMs: number;
@@ -164,6 +167,92 @@ const FACE_TEXTURE_URL =
   'https://cdn.jsdelivr.net/gh/hiukim/mind-ar-js@1.2.5/examples/face-tracking/assets/sparkar/face-mask.png';
 
 const FACE_LOSS_GRACE_MS = 420;
+const CALIBRATION_STORAGE_KEY =
+  'video-town-mask-calibration-v1';
+
+type SavedMaskCalibration = {
+  thresholdPx: number;
+  expressionThresholdPx: number;
+  verificationHz: number;
+  updatedAt: string;
+};
+
+function makeCalibrationDeviceKey(
+  deviceId: string | null,
+  width: number,
+  height: number,
+) {
+  return [
+    deviceId || 'default-camera',
+    `${width}x${height}`,
+  ].join(':');
+}
+
+function loadSavedCalibration(
+  deviceKey: string,
+): SavedMaskCalibration | null {
+  try {
+    const raw =
+      localStorage.getItem(
+        CALIBRATION_STORAGE_KEY,
+      );
+
+    if (!raw) return null;
+
+    const parsed =
+      JSON.parse(raw) as
+        Record<
+          string,
+          SavedMaskCalibration
+        >;
+
+    const saved =
+      parsed[deviceKey];
+
+    if (
+      !saved ||
+      !Number.isFinite(
+        saved.thresholdPx,
+      ) ||
+      !Number.isFinite(
+        saved.expressionThresholdPx,
+      )
+    ) {
+      return null;
+    }
+
+    return saved;
+  } catch {
+    return null;
+  }
+}
+
+function saveCalibration(
+  deviceKey: string,
+  calibration: SavedMaskCalibration,
+) {
+  try {
+    const raw =
+      localStorage.getItem(
+        CALIBRATION_STORAGE_KEY,
+      );
+
+    const parsed =
+      raw
+        ? JSON.parse(raw)
+        : {};
+
+    parsed[deviceKey] =
+      calibration;
+
+    localStorage.setItem(
+      CALIBRATION_STORAGE_KEY,
+      JSON.stringify(parsed),
+    );
+  } catch {
+    // Calibration persistence must never interrupt video.
+  }
+}
 
 // Exact Face Effect smoothing parameters used by MediaPipe's
 // face_landmarks_smoothing.pbtxt.
@@ -635,6 +724,38 @@ export async function createMaskedCameraStream(
 
     const controller = mindar.controller;
 
+    const calibrationDeviceKey =
+      makeCalibrationDeviceKey(
+        deviceId,
+        video.videoWidth,
+        video.videoHeight,
+      );
+
+    const savedCalibration =
+      loadSavedCalibration(
+        calibrationDeviceKey,
+      );
+
+    const initialThresholdPx =
+      savedCalibration?.thresholdPx ??
+      DEFAULT_GLOBAL_THRESHOLD_PX;
+
+    const initialExpressionThresholdPx =
+      savedCalibration
+        ?.expressionThresholdPx ??
+      DEFAULT_EXPRESSION_THRESHOLD_PX;
+
+    const initialVerificationHz =
+      savedCalibration
+        ?.verificationHz ??
+      DEFAULT_GATE_VERIFICATION_HZ;
+
+    const calibrationSeedSource:
+      'saved' | 'default' =
+        savedCalibration
+          ? 'saved'
+          : 'default';
+
     debugLogger =
       new MaskDebugLogger({
         version: 'mask-diagnostics-v1',
@@ -661,11 +782,13 @@ export async function createMaskedCameraStream(
         },
         gate: {
           thresholdPx:
-            DEFAULT_GLOBAL_THRESHOLD_PX,
+            initialThresholdPx,
           verificationHz:
-            DEFAULT_GATE_VERIFICATION_HZ,
+            initialVerificationHz,
           initialExpressionThresholdPx:
-            DEFAULT_EXPRESSION_THRESHOLD_PX,
+            initialExpressionThresholdPx,
+          calibrationSeedSource,
+          savedCalibration,
           coreLandmarkIndices:
             Array.from(
               CORE_LANDMARK_INDICES,
@@ -692,9 +815,9 @@ export async function createMaskedCameraStream(
 
     const globalGate =
       new GlobalLandmarkGate(
-        DEFAULT_GLOBAL_THRESHOLD_PX,
-        DEFAULT_GATE_VERIFICATION_HZ,
-        DEFAULT_EXPRESSION_THRESHOLD_PX,
+        initialThresholdPx,
+        initialVerificationHz,
+        initialExpressionThresholdPx,
       );
 
     const flipped =
@@ -712,6 +835,7 @@ export async function createMaskedCameraStream(
     let frameIntervalMs = 33.3;
     let fps = 30;
     let trackingFrameIndex = 0;
+    let calibrationFinalized = false;
 
     const updateTrackingRate = (
       timestampMs: number,
@@ -973,6 +1097,60 @@ export async function createMaskedCameraStream(
               },
               now,
             );
+
+            const convergedStatus =
+              globalGate.getStatus();
+
+            if (
+              convergedStatus
+                .calibrationConverged &&
+              !calibrationFinalized
+            ) {
+              calibrationFinalized = true;
+
+              const savedAt =
+                new Date().toISOString();
+
+              const calibration = {
+                thresholdPx:
+                  convergedStatus
+                    .thresholdPx,
+                expressionThresholdPx:
+                  convergedStatus
+                    .expressionThresholdPx,
+                verificationHz:
+                  convergedStatus
+                    .verificationHz,
+                updatedAt: savedAt,
+              };
+
+              saveCalibration(
+                calibrationDeviceKey,
+                calibration,
+              );
+
+              debugLogger?.log(
+                'calibration_converged',
+                {
+                  frameIndex:
+                    trackingFrameIndex,
+                  calibrationDeviceKey,
+                  calibrationSeedSource,
+                  calibration,
+                  trackingStatus:
+                    convergedStatus,
+                },
+                now,
+              );
+
+              // Full coordinate serialization, statistical tuning and network
+              // log uploads end here. The lightweight fixed gate remains active.
+              debugLogger?.stop({
+                reason:
+                  'calibration_converged',
+                calibration,
+              });
+            }
           } else {
             debugLogger?.log(
               'tracking_tick',
@@ -1146,6 +1324,11 @@ export async function createMaskedCameraStream(
           globalGate.getStatus().autoTuningEnabled,
         autoTuneConfidence:
           globalGate.getStatus().autoTuneConfidence,
+        calibrationConverged:
+          globalGate.getStatus().calibrationConverged,
+        convergenceProgress:
+          globalGate.getStatus().convergenceProgress,
+        calibrationSeedSource,
         staticAcceptRate:
           globalGate.getStatus().staticAcceptRate,
         outputUpdateRate:

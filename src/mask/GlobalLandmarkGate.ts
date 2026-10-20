@@ -47,6 +47,8 @@ export interface GlobalLandmarkGateStatus {
   expressionNoiseFloorPx: number;
   autoTuningEnabled: boolean;
   autoTuneConfidence: number;
+  calibrationConverged: boolean;
+  convergenceProgress: number;
   noiseSampleCount: number;
   expressionNoiseSampleCount: number;
   staticLikely: boolean;
@@ -79,6 +81,8 @@ export interface GateTuningSnapshot {
   staticAcceptRate: number;
   outputUpdateRate: number;
   confidence: number;
+  converged: boolean;
+  convergenceProgress: number;
 }
 
 export interface GlobalLandmarkGateResult {
@@ -100,6 +104,9 @@ const HISTORY_SIZE = 90;
 const DECISION_HISTORY_SIZE = 60;
 const STATIC_HISTORY_SIZE = 40;
 const MIN_TUNING_SAMPLES = 12;
+const CONVERGENCE_REQUIRED_EVALUATIONS = 15;
+const CONVERGENCE_RIGID_EPS_PX = 0.18;
+const CONVERGENCE_EXPRESSION_EPS_PX = 0.12;
 
 function clamp(value: number, min: number, max: number) {
   return Math.min(max, Math.max(min, value));
@@ -300,6 +307,8 @@ export class GlobalLandmarkGate {
   private expressionThresholdPx: number;
   private verificationHz: number;
   private autoTuningEnabled = true;
+  private calibrationConverged = false;
+  private convergenceStableCount = 0;
   private nextEvaluationMs = -1;
   private lastAcceptMs = -1;
   private rigidNoiseHistory: number[] = [];
@@ -383,6 +392,16 @@ export class GlobalLandmarkGate {
         this.autoTuningEnabled,
       autoTuneConfidence:
         this.getTuneConfidence(),
+      calibrationConverged:
+        this.calibrationConverged,
+      convergenceProgress:
+        this.calibrationConverged
+          ? 1
+          : Math.min(
+              1,
+              this.convergenceStableCount /
+                CONVERGENCE_REQUIRED_EVALUATIONS,
+            ),
       noiseSampleCount:
         this.rigidNoiseHistory.length,
       expressionNoiseSampleCount:
@@ -483,6 +502,20 @@ export class GlobalLandmarkGate {
   }
 
   setAutoTuningEnabled(enabled: boolean) {
+    if (
+      enabled &&
+      this.calibrationConverged
+    ) {
+      // Explicitly re-enabling starts a fresh calibration cycle while keeping
+      // the last converged thresholds as the starting seed.
+      this.calibrationConverged = false;
+      this.convergenceStableCount = 0;
+      this.rigidNoiseHistory = [];
+      this.expressionNoiseHistory = [];
+      this.staticAcceptanceHistory = [];
+      this.decisionHistory = [];
+    }
+
     this.autoTuningEnabled = enabled;
 
     this.status =
@@ -490,6 +523,8 @@ export class GlobalLandmarkGate {
         ...this.status,
         autoTuningEnabled:
           enabled,
+        calibrationConverged:
+          this.calibrationConverged,
       });
   }
 
@@ -627,6 +662,42 @@ export class GlobalLandmarkGate {
         );
     }
 
+    const confidence =
+      this.getTuneConfidence();
+
+    const thresholdStable =
+      confidence >= 1 &&
+      Math.abs(
+        targetThresholdPx -
+          this.thresholdPx,
+      ) <=
+        CONVERGENCE_RIGID_EPS_PX &&
+      Math.abs(
+        targetExpressionThresholdPx -
+          this.expressionThresholdPx,
+      ) <=
+        CONVERGENCE_EXPRESSION_EPS_PX;
+
+    if (
+      this.autoTuningEnabled &&
+      thresholdStable
+    ) {
+      this.convergenceStableCount++;
+    } else if (
+      this.autoTuningEnabled
+    ) {
+      this.convergenceStableCount = 0;
+    }
+
+    if (
+      this.autoTuningEnabled &&
+      this.convergenceStableCount >=
+        CONVERGENCE_REQUIRED_EVALUATIONS
+    ) {
+      this.calibrationConverged = true;
+      this.autoTuningEnabled = false;
+    }
+
     return {
       changed:
         Math.abs(
@@ -649,8 +720,17 @@ export class GlobalLandmarkGate {
       expressionNoiseFloorPx,
       staticAcceptRate,
       outputUpdateRate,
-      confidence:
-        this.getTuneConfidence(),
+      confidence,
+      converged:
+        this.calibrationConverged,
+      convergenceProgress:
+        this.calibrationConverged
+          ? 1
+          : Math.min(
+              1,
+              this.convergenceStableCount /
+                CONVERGENCE_REQUIRED_EVALUATIONS,
+            ),
     };
   }
 
@@ -690,6 +770,16 @@ export class GlobalLandmarkGate {
         this.status.outputUpdateRate,
       confidence:
         this.getTuneConfidence(),
+      converged:
+        this.calibrationConverged,
+      convergenceProgress:
+        this.calibrationConverged
+          ? 1
+          : Math.min(
+              1,
+              this.convergenceStableCount /
+                CONVERGENCE_REQUIRED_EVALUATIONS,
+            ),
     });
 
     if (
@@ -850,16 +940,21 @@ export class GlobalLandmarkGate {
       );
 
     const noiseFloorBefore =
-      quantile(
-        this.rigidNoiseHistory,
-        0.25,
-      );
+      this.calibrationConverged
+        ? this.status.noiseFloorPx
+        : quantile(
+            this.rigidNoiseHistory,
+            0.25,
+          );
 
     const expressionNoiseFloorBefore =
-      quantile(
-        this.expressionNoiseHistory,
-        0.25,
-      );
+      this.calibrationConverged
+        ? this.status
+            .expressionNoiseFloorPx
+        : quantile(
+            this.expressionNoiseHistory,
+            0.25,
+          );
 
     const staticLikely =
       frameRigidMotionPx <=
@@ -963,16 +1058,27 @@ export class GlobalLandmarkGate {
       DECISION_HISTORY_SIZE,
     );
 
-    this.collectNoiseSamples(
-      frameRigidMotionPx,
-      frameExpressionMotionPx,
-    );
-
-    const tuning =
-      this.tune(
+    let tuning =
+      emptyTuning(
         thresholdBeforePx,
         expressionThresholdBeforePx,
       );
+
+    if (
+      this.autoTuningEnabled &&
+      !this.calibrationConverged
+    ) {
+      this.collectNoiseSamples(
+        frameRigidMotionPx,
+        frameExpressionMotionPx,
+      );
+
+      tuning =
+        this.tune(
+          thresholdBeforePx,
+          expressionThresholdBeforePx,
+        );
+    }
 
     const coreMeasurements =
       this.buildCoreMeasurements(
@@ -1033,6 +1139,10 @@ export class GlobalLandmarkGate {
           this.autoTuningEnabled,
         autoTuneConfidence:
           tuning.confidence,
+        calibrationConverged:
+          this.calibrationConverged,
+        convergenceProgress:
+          tuning.convergenceProgress,
         noiseSampleCount:
           this.rigidNoiseHistory.length,
         expressionNoiseSampleCount:
