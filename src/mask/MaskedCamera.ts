@@ -1,3 +1,5 @@
+import { AdaptiveLandmarkDeadband } from './AdaptiveDeadband';
+
 export type CameraMode = 'mask' | 'original';
 
 export interface TrackingStatus {
@@ -6,6 +8,9 @@ export interface TrackingStatus {
   smoothing: 'mediapipe-relative-velocity';
   windowSize: number;
   velocityScale: number;
+  deadbandHoldRatio: number;
+  deadbandNoiseRadius: number;
+  deadbandMaxNoiseRadius: number;
 }
 
 export interface MaskedCameraController {
@@ -540,6 +545,22 @@ export async function createMaskedCameraStream(
     const smoother =
       new FaceLandmarksSmoother();
 
+    // Independent second-stage stabilizer:
+    // it does not interpolate coordinates. It learns each landmark's recent
+    // noise range with rolling median/MAD and simply holds the last output
+    // while the new value stays inside that learned range.
+    const deadband =
+      new AdaptiveLandmarkDeadband({
+        windowSize: 11,
+        minSamples: 6,
+        threshold: 3,
+        constantScaleFactor: 1.4826,
+        minRadius: 0.00045,
+        maxRadius: 0.012,
+        releaseRatio: 0.55,
+        quietFramesToHold: 3,
+      });
+
     const flipped =
       controller.flipFace
         ? createFlippedInput(
@@ -640,6 +661,7 @@ export async function createMaskedCameraStream(
           });
 
           smoother.reset();
+          deadband.reset();
 
           if (
             everSeenFace &&
@@ -661,9 +683,14 @@ export async function createMaskedCameraStream(
               video.videoHeight,
             );
 
+          const stabilizedLandmarks =
+            deadband.apply(
+              smoothedLandmarks,
+            );
+
           const estimateResult =
             controller.estimator.estimate(
-              smoothedLandmarks,
+              stabilizedLandmarks,
             );
 
           estimateResult.blendshapes =
@@ -811,6 +838,12 @@ export async function createMaskedCameraStream(
           VELOCITY_FILTER_WINDOW_SIZE,
         velocityScale:
           VELOCITY_FILTER_SCALE,
+        deadbandHoldRatio:
+          deadband.getStatus().holdRatio,
+        deadbandNoiseRadius:
+          deadband.getStatus().meanNoiseRadius,
+        deadbandMaxNoiseRadius:
+          deadband.getStatus().maxNoiseRadius,
       });
 
     const stop = () => {
