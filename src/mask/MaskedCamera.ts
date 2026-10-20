@@ -1,4 +1,4 @@
-import { AdaptiveLandmarkDeadband } from './AdaptiveDeadband';
+import { AbsoluteLandmarkDeadband } from './AbsoluteDeadband';
 
 export type CameraMode = 'mask' | 'original';
 
@@ -8,14 +8,16 @@ export interface TrackingStatus {
   smoothing: 'mediapipe-relative-velocity';
   windowSize: number;
   velocityScale: number;
+  deadbandThreshold: number;
   deadbandHoldRatio: number;
-  deadbandNoiseRadius: number;
-  deadbandMaxNoiseRadius: number;
 }
+
+export const DEFAULT_DEADBAND_THRESHOLD = 0.0015;
 
 export interface MaskedCameraController {
   stream: MediaStream;
   stop: () => void;
+  setDeadbandThreshold: (threshold: number) => void;
   getTrackingStatus: () => TrackingStatus;
 }
 
@@ -592,27 +594,20 @@ export async function createMaskedCameraStream(
     }
 
     // MindAR's built-in loop never started. Our only tracking path is:
-    // detect -> RelativeVelocity(raw landmarks) -> adaptive deadband
+    // detect -> RelativeVelocity(raw landmarks) -> simple absolute deadband
     //        -> estimate -> matrix + geometry from the SAME landmarks.
 
     const smoother =
       new FaceLandmarksSmoother();
 
-    // Independent second-stage stabilizer:
-    // it does not interpolate coordinates. It learns each landmark's recent
-    // noise range with rolling median/MAD and simply holds the last output
-    // while the new value stays inside that learned range.
+    // Independent second-stage stabilizer.
+    // No learning or interpolation: compare the current x/y/z values with the
+    // last values actually sent downstream. Small absolute differences are
+    // held exactly; larger changes pass immediately.
     const deadband =
-      new AdaptiveLandmarkDeadband({
-        windowSize: 11,
-        minSamples: 6,
-        threshold: 3,
-        constantScaleFactor: 1.4826,
-        minRadius: 0.00045,
-        maxRadius: 0.012,
-        releaseRatio: 0.55,
-        quietFramesToHold: 3,
-      });
+      new AbsoluteLandmarkDeadband(
+        DEFAULT_DEADBAND_THRESHOLD,
+      );
 
     const flipped =
       controller.flipFace
@@ -959,13 +954,17 @@ export async function createMaskedCameraStream(
           VELOCITY_FILTER_WINDOW_SIZE,
         velocityScale:
           VELOCITY_FILTER_SCALE,
+        deadbandThreshold:
+          deadband.getStatus().threshold,
         deadbandHoldRatio:
           deadband.getStatus().holdRatio,
-        deadbandNoiseRadius:
-          deadband.getStatus().meanNoiseRadius,
-        deadbandMaxNoiseRadius:
-          deadband.getStatus().maxNoiseRadius,
       });
+
+    const setDeadbandThreshold = (
+      threshold: number,
+    ) => {
+      deadband.setThreshold(threshold);
+    };
 
     const stop = () => {
       if (stopped) return;
@@ -1040,6 +1039,7 @@ export async function createMaskedCameraStream(
     return {
       stream: outputStream,
       stop,
+      setDeadbandThreshold,
       getTrackingStatus,
     };
   } catch (error) {
