@@ -27,12 +27,14 @@ const PORT =
   Number(process.env.PORT) || 4173;
 
 const MASK_RUNTIME_VERSION =
-  'mask-runtime-20261020-v7';
+  'mask-runtime-20261020-v9';
 
 const MASK_RUNTIME_FEATURES = {
   metricLandmarkDeadband: true,
   liveDeadbandSlider: true,
   liveOneEuroSliders: true,
+  frontendWorkerStabilityBacktest: true,
+  stabilityBacktestCaptureMs: 7000,
   oneEuroConfigChangeLogging: true,
   pointDeadbandEffectLogging: true,
   loggingContinuesAfterConvergence: true,
