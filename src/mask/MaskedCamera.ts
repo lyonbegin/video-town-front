@@ -875,58 +875,80 @@ export async function createMaskedCameraStream(
             };
           }
 
-          debugLogger?.log(
-            'tracking_frame',
-            {
-              frameIndex:
-                trackingFrameIndex,
-              detected: true,
-              detectDurationMs,
-              trackerFps: fps,
-              trackerFrameIntervalMs:
-                frameIntervalMs,
-              videoWidth:
-                video.videoWidth,
-              videoHeight:
-                video.videoHeight,
-              rawNormalized:
-                flattenDetectedLandmarks(
-                  results.faceLandmarks[0],
-                ),
-              smoothedNormalized:
-                flattenNumericLandmarks(
-                  smoothedLandmarks,
-                ),
-              gate: {
-                ...globalGate.getStatus(),
-                firstFrame:
-                  gateResult.firstFrame,
-                coreMeasurements:
-                  gateResult.coreMeasurements,
-              },
-              appliedEstimate,
-              currentOutputEstimate:
-                controller.lastEstimateResult
-                  ? {
-                      faceScale:
-                        controller
-                          .lastEstimateResult
-                          .faceScale,
-                      faceMatrix:
-                        Array.from(
+          if (gateResult.evaluated) {
+            debugLogger?.log(
+              'gate_evaluation',
+              {
+                frameIndex:
+                  trackingFrameIndex,
+                detected: true,
+                detectDurationMs,
+                trackerFps: fps,
+                trackerFrameIntervalMs:
+                  frameIntervalMs,
+                videoWidth:
+                  video.videoWidth,
+                videoHeight:
+                  video.videoHeight,
+                rawNormalized:
+                  flattenDetectedLandmarks(
+                    results.faceLandmarks[0],
+                  ),
+                smoothedNormalized:
+                  flattenNumericLandmarks(
+                    smoothedLandmarks,
+                  ),
+                gate: {
+                  ...globalGate.getStatus(),
+                  firstFrame:
+                    gateResult.firstFrame,
+                  coreMeasurements:
+                    gateResult.coreMeasurements,
+                },
+                appliedEstimate,
+                currentOutputEstimate:
+                  controller.lastEstimateResult
+                    ? {
+                        faceScale:
                           controller
                             .lastEstimateResult
-                            .faceMatrix,
-                        ),
-                    }
-                  : null,
-              renderedFaceMatrix:
-                copyFaceMatrix(
-                  faceMesh,
-                ),
-            },
-            now,
-          );
+                            .faceScale,
+                        faceMatrix:
+                          Array.from(
+                            controller
+                              .lastEstimateResult
+                              .faceMatrix,
+                          ),
+                      }
+                    : null,
+                renderedFaceMatrix:
+                  copyFaceMatrix(
+                    faceMesh,
+                  ),
+              },
+              now,
+            );
+          } else {
+            debugLogger?.log(
+              'tracking_tick',
+              {
+                frameIndex:
+                  trackingFrameIndex,
+                detected: true,
+                detectDurationMs,
+                trackerFps: fps,
+                trackerFrameIntervalMs:
+                  frameIntervalMs,
+                gate:
+                  globalGate.getStatus(),
+                renderedFaceMatrix:
+                  copyFaceMatrix(
+                    faceMesh,
+                  ),
+              },
+              now,
+            );
+          }
 
           lastSeenAt = now;
           everSeenFace = true;
