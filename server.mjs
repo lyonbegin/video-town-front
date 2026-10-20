@@ -277,10 +277,276 @@ function maxValue(values) {
     : 0;
 }
 
+function percentileValue(
+  values,
+  q,
+) {
+  if (values.length === 0) {
+    return 0;
+  }
+
+  const sorted =
+    [...values].sort(
+      (a, b) => a - b,
+    );
+
+  const position =
+    Math.max(
+      0,
+      Math.min(1, q),
+    ) *
+    (sorted.length - 1);
+
+  const lower =
+    Math.floor(position);
+
+  const upper =
+    Math.ceil(position);
+
+  if (lower === upper) {
+    return sorted[lower];
+  }
+
+  const fraction =
+    position - lower;
+
+  return (
+    sorted[lower] *
+      (1 - fraction) +
+    sorted[upper] *
+      fraction
+  );
+}
+
+function buildPointDeadbandSummary(
+  records,
+) {
+  const effects =
+    records.filter(
+      (record) =>
+        record?.type ===
+        'point_deadband_effect',
+    );
+
+  const configChanges =
+    records.filter(
+      (record) =>
+        record?.type ===
+        'point_deadband_config_change',
+    );
+
+  const groups =
+    new Map();
+
+  for (const record of effects) {
+    const data =
+      record?.data || {};
+
+    const thresholdPx =
+      Number(
+        data.thresholdPx || 0,
+      );
+
+    const key =
+      thresholdPx.toFixed(2);
+
+    if (!groups.has(key)) {
+      groups.set(key, {
+        thresholdPx,
+        heldRatios: [],
+        changedRatios: [],
+        decisionMeans: [],
+        decisionP95s: [],
+        inputMeans: [],
+        outputMeans: [],
+        outputP95s: [],
+        renderedMeans: [],
+        renderedP95s: [],
+        suppressions: [],
+        renderedVsGeometry: [],
+      });
+    }
+
+    const group =
+      groups.get(key);
+
+    group.heldRatios.push(
+      Number(
+        data.heldRatio || 0,
+      ),
+    );
+
+    group.changedRatios.push(
+      Number(
+        data.changedRatio || 0,
+      ),
+    );
+
+    group.decisionMeans.push(
+      Number(
+        data.decisionDistancePx
+          ?.mean || 0,
+      ),
+    );
+
+    group.decisionP95s.push(
+      Number(
+        data.decisionDistancePx
+          ?.p95 || 0,
+      ),
+    );
+
+    group.inputMeans.push(
+      Number(
+        data.inputMotionPx
+          ?.mean || 0,
+      ),
+    );
+
+    group.outputMeans.push(
+      Number(
+        data.geometryOutputMotionPx
+          ?.mean || 0,
+      ),
+    );
+
+    group.outputP95s.push(
+      Number(
+        data.geometryOutputMotionPx
+          ?.p95 || 0,
+      ),
+    );
+
+    group.renderedMeans.push(
+      Number(
+        data.renderedMotionProxyPx
+          ?.mean || 0,
+      ),
+    );
+
+    group.renderedP95s.push(
+      Number(
+        data.renderedMotionProxyPx
+          ?.p95 || 0,
+      ),
+    );
+
+    group.suppressions.push(
+      Number(
+        data.geometrySuppressionRatio ||
+          0,
+      ),
+    );
+
+    group.renderedVsGeometry.push(
+      Number(
+        data.renderedVsGeometryRatio ||
+          0,
+      ),
+    );
+  }
+
+  const byThreshold =
+    Array.from(
+      groups.values(),
+    )
+      .map((group) => ({
+        thresholdPx:
+          group.thresholdPx,
+        sampleCount:
+          group.heldRatios.length,
+        heldRatioMean:
+          mean(
+            group.heldRatios,
+          ),
+        changedRatioMean:
+          mean(
+            group.changedRatios,
+          ),
+        decisionDistanceMeanPx:
+          mean(
+            group.decisionMeans,
+          ),
+        decisionDistanceP95MeanPx:
+          mean(
+            group.decisionP95s,
+          ),
+        inputMotionMeanPx:
+          mean(
+            group.inputMeans,
+          ),
+        geometryOutputMotionMeanPx:
+          mean(
+            group.outputMeans,
+          ),
+        geometryOutputMotionP95Px:
+          percentileValue(
+            group.outputP95s,
+            0.95,
+          ),
+        geometrySuppressionRatioMean:
+          mean(
+            group.suppressions,
+          ),
+        renderedMotionProxyMeanPx:
+          mean(
+            group.renderedMeans,
+          ),
+        renderedMotionProxyP95Px:
+          percentileValue(
+            group.renderedP95s,
+            0.95,
+          ),
+        renderedVsGeometryRatioMean:
+          mean(
+            group.renderedVsGeometry,
+          ),
+      }))
+      .sort(
+        (a, b) =>
+          a.thresholdPx -
+          b.thresholdPx,
+      );
+
+  return {
+    effectEventCount:
+      effects.length,
+    configChangeCount:
+      configChanges.length,
+    configChanges:
+      configChanges.map(
+        (record) => ({
+          perfMs:
+            Number(
+              record.perfMs || 0,
+            ),
+          wallTime:
+            record.wallTime || null,
+          ...(record.data || {}),
+        }),
+      ),
+    currentThresholdPx:
+      effects.length > 0
+        ? Number(
+            effects[
+              effects.length - 1
+            ]?.data?.thresholdPx ||
+              0,
+          )
+        : 0,
+    byThreshold,
+  };
+}
+
 function buildDiagnosticSummary(
   sessionId,
   records,
 ) {
+  const pointDeadband =
+    buildPointDeadbandSummary(
+      records,
+    );
+
   const evaluations =
     records.filter(
       (record) =>
@@ -309,6 +575,7 @@ function buildDiagnosticSummary(
     return {
       sessionId,
       evaluationCount: 0,
+      pointDeadband,
       diagnosis: [
         'NO_GATE_EVALUATIONS',
       ],
@@ -669,6 +936,48 @@ function buildDiagnosticSummary(
     );
   }
 
+  const deadbandGroups =
+    pointDeadband.byThreshold || [];
+
+  const latestDeadbandGroup =
+    deadbandGroups.length > 0
+      ? deadbandGroups[
+          deadbandGroups.length - 1
+        ]
+      : null;
+
+  if (
+    latestDeadbandGroup &&
+    latestDeadbandGroup.heldRatioMean >
+      0.5 &&
+    latestDeadbandGroup
+      .geometrySuppressionRatioMean <
+      0.1
+  ) {
+    diagnosis.push(
+      'DEADBAND_NOT_AFFECTING_GEOMETRY',
+    );
+  }
+
+  if (
+    latestDeadbandGroup &&
+    latestDeadbandGroup
+      .geometrySuppressionRatioMean >
+      0.3 &&
+    latestDeadbandGroup
+      .renderedMotionProxyMeanPx >
+      Math.max(
+        0.5,
+        latestDeadbandGroup
+          .geometryOutputMotionMeanPx *
+          2,
+      )
+  ) {
+    diagnosis.push(
+      'POSE_DOMINATES_VISIBLE_MOTION',
+    );
+  }
+
   if (
     diagnosis.length === 0
   ) {
@@ -799,6 +1108,7 @@ function buildDiagnosticSummary(
           0,
         ),
     },
+    pointDeadband,
     autoTune: {
       enabled:
         Boolean(

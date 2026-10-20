@@ -1106,9 +1106,321 @@ class RelativeVelocityFilter {
 }
 
 
+type MotionStats = {
+  mean: number;
+  p50: number;
+  p95: number;
+  max: number;
+};
+
+function summarizeMotion(
+  values: number[],
+): MotionStats {
+  if (values.length === 0) {
+    return {
+      mean: 0,
+      p50: 0,
+      p95: 0,
+      max: 0,
+    };
+  }
+
+  const sorted = [...values].sort(
+    (a, b) => a - b,
+  );
+
+  const percentile = (
+    q: number,
+  ) => {
+    const position =
+      Math.max(
+        0,
+        Math.min(1, q),
+      ) *
+      (sorted.length - 1);
+
+    const lower =
+      Math.floor(position);
+
+    const upper =
+      Math.ceil(position);
+
+    if (lower === upper) {
+      return sorted[lower];
+    }
+
+    const fraction =
+      position - lower;
+
+    return (
+      sorted[lower] *
+        (1 - fraction) +
+      sorted[upper] *
+        fraction
+    );
+  };
+
+  return {
+    mean:
+      values.reduce(
+        (sum, value) =>
+          sum + value,
+        0,
+      ) / values.length,
+    p50:
+      percentile(0.5),
+    p95:
+      percentile(0.95),
+    max:
+      sorted[
+        sorted.length - 1
+      ],
+  };
+}
+
+function clonePoints(
+  points: number[][],
+) {
+  return points.map(
+    (point) => [
+      point[0] ?? 0,
+      point[1] ?? 0,
+      point[2] ?? 0,
+    ],
+  );
+}
+
+function transformMetricPoint(
+  faceMatrix: number[],
+  point: number[],
+) {
+  const x = point[0] ?? 0;
+  const y = point[1] ?? 0;
+  const z = point[2] ?? 0;
+
+  return [
+    (faceMatrix[0] ?? 1) * x +
+      (faceMatrix[1] ?? 0) * y +
+      (faceMatrix[2] ?? 0) * z +
+      (faceMatrix[3] ?? 0),
+    (faceMatrix[4] ?? 0) * x +
+      (faceMatrix[5] ?? 1) * y +
+      (faceMatrix[6] ?? 0) * z +
+      (faceMatrix[7] ?? 0),
+    (faceMatrix[8] ?? 0) * x +
+      (faceMatrix[9] ?? 0) * y +
+      (faceMatrix[10] ?? 1) * z +
+      (faceMatrix[11] ?? 0),
+  ];
+}
+
+class DeadbandEffectMonitor {
+  private previousInput:
+    number[][] = [];
+  private previousOutput:
+    number[][] = [];
+  private previousRendered:
+    number[][] = [];
+
+  reset() {
+    this.previousInput = [];
+    this.previousOutput = [];
+    this.previousRendered = [];
+  }
+
+  measure(
+    inputMetric: number[][],
+    outputMetric: number[][],
+    faceMatrix: number[],
+    pixelsPerMetricUnit: number,
+  ) {
+    const scale =
+      Math.max(
+        0.000001,
+        pixelsPerMetricUnit,
+      );
+
+    const rendered =
+      outputMetric.map(
+        (point) =>
+          transformMetricPoint(
+            faceMatrix,
+            point,
+          ),
+      );
+
+    const inputDistances:
+      number[] = [];
+
+    const outputDistances:
+      number[] = [];
+
+    const renderedDistances:
+      number[] = [];
+
+    if (
+      this.previousInput.length ===
+      inputMetric.length
+    ) {
+      for (
+        let i = 0;
+        i < inputMetric.length;
+        i++
+      ) {
+        const current =
+          inputMetric[i];
+
+        const previous =
+          this.previousInput[i];
+
+        inputDistances.push(
+          Math.hypot(
+            (current[0] ?? 0) -
+              (previous[0] ?? 0),
+            (current[1] ?? 0) -
+              (previous[1] ?? 0),
+            (current[2] ?? 0) -
+              (previous[2] ?? 0),
+          ) * scale,
+        );
+      }
+    }
+
+    if (
+      this.previousOutput.length ===
+      outputMetric.length
+    ) {
+      for (
+        let i = 0;
+        i < outputMetric.length;
+        i++
+      ) {
+        const current =
+          outputMetric[i];
+
+        const previous =
+          this.previousOutput[i];
+
+        outputDistances.push(
+          Math.hypot(
+            (current[0] ?? 0) -
+              (previous[0] ?? 0),
+            (current[1] ?? 0) -
+              (previous[1] ?? 0),
+            (current[2] ?? 0) -
+              (previous[2] ?? 0),
+          ) * scale,
+        );
+      }
+    }
+
+    if (
+      this.previousRendered.length ===
+      rendered.length
+    ) {
+      for (
+        let i = 0;
+        i < rendered.length;
+        i++
+      ) {
+        const current =
+          rendered[i];
+
+        const previous =
+          this.previousRendered[i];
+
+        renderedDistances.push(
+          Math.hypot(
+            (current[0] ?? 0) -
+              (previous[0] ?? 0),
+            (current[1] ?? 0) -
+              (previous[1] ?? 0),
+            (current[2] ?? 0) -
+              (previous[2] ?? 0),
+          ) * scale,
+        );
+      }
+    }
+
+    const inputMotionPx =
+      summarizeMotion(
+        inputDistances,
+      );
+
+    const geometryOutputMotionPx =
+      summarizeMotion(
+        outputDistances,
+      );
+
+    const renderedMotionProxyPx =
+      summarizeMotion(
+        renderedDistances,
+      );
+
+    const geometrySuppressionRatio =
+      inputMotionPx.mean > 1e-9
+        ? Math.max(
+            0,
+            Math.min(
+              1,
+              1 -
+                geometryOutputMotionPx.mean /
+                  inputMotionPx.mean,
+            ),
+          )
+        : 0;
+
+    const renderedVsGeometryRatio =
+      geometryOutputMotionPx.mean >
+      1e-9
+        ? renderedMotionProxyPx.mean /
+          geometryOutputMotionPx.mean
+        : renderedMotionProxyPx.mean >
+            1e-9
+          ? Number.POSITIVE_INFINITY
+          : 1;
+
+    this.previousInput =
+      clonePoints(
+        inputMetric,
+      );
+
+    this.previousOutput =
+      clonePoints(
+        outputMetric,
+      );
+
+    this.previousRendered =
+      clonePoints(
+        rendered,
+      );
+
+    return {
+      inputMotionPx,
+      geometryOutputMotionPx,
+      renderedMotionProxyPx,
+      geometrySuppressionRatio,
+      renderedVsGeometryRatio:
+        Number.isFinite(
+          renderedVsGeometryRatio,
+        )
+          ? renderedVsGeometryRatio
+          : 999,
+    };
+  }
+}
+
 class Absolute3DPointDeadband {
   private heldPoints: number[][] = [];
   private heldCount = 0;
+  private changedCount = 0;
+  private decisionDistancePx:
+    MotionStats = {
+      mean: 0,
+      p50: 0,
+      p95: 0,
+      max: 0,
+    };
 
   constructor(
     private thresholdPx: number,
@@ -1138,6 +1450,13 @@ class Absolute3DPointDeadband {
   reset() {
     this.heldPoints = [];
     this.heldCount = 0;
+    this.changedCount = 0;
+    this.decisionDistancePx = {
+      mean: 0,
+      p50: 0,
+      p95: 0,
+      max: 0,
+    };
   }
 
   applyMetric(
@@ -1158,6 +1477,14 @@ class Absolute3DPointDeadband {
         );
 
       this.heldCount = 0;
+      this.changedCount =
+        metricLandmarks.length;
+      this.decisionDistancePx = {
+        mean: 0,
+        p50: 0,
+        p95: 0,
+        max: 0,
+      };
 
       return this.heldPoints.map(
         (point) => [...point],
@@ -1171,6 +1498,9 @@ class Absolute3DPointDeadband {
       );
 
     let heldCount = 0;
+    let changedCount = 0;
+    const decisionDistances:
+      number[] = [];
 
     for (
       let i = 0;
@@ -1203,6 +1533,10 @@ class Absolute3DPointDeadband {
         ) *
         pxScale;
 
+      decisionDistances.push(
+        distancePx,
+      );
+
       if (
         distancePx <
         this.thresholdPx
@@ -1210,6 +1544,8 @@ class Absolute3DPointDeadband {
         heldCount++;
         continue;
       }
+
+      changedCount++;
 
       previous[0] =
         current[0] ?? 0;
@@ -1223,6 +1559,12 @@ class Absolute3DPointDeadband {
 
     this.heldCount =
       heldCount;
+    this.changedCount =
+      changedCount;
+    this.decisionDistancePx =
+      summarizeMotion(
+        decisionDistances,
+      );
 
     return this.heldPoints.map(
       (point) => [...point],
@@ -1231,6 +1573,16 @@ class Absolute3DPointDeadband {
 
   getHeldCount() {
     return this.heldCount;
+  }
+
+  getChangedCount() {
+    return this.changedCount;
+  }
+
+  getDecisionDistancePx() {
+    return {
+      ...this.decisionDistancePx,
+    };
   }
 
   getThresholdPx() {
@@ -1756,6 +2108,9 @@ export async function createMaskedCameraStream(
         DEFAULT_POINT_DEADBAND_3D_PX,
       );
 
+    const deadbandEffectMonitor =
+      new DeadbandEffectMonitor();
+
     const globalGate =
       new GlobalLandmarkGate(
         initialThresholdPx,
@@ -1779,6 +2134,12 @@ export async function createMaskedCameraStream(
     let fps = 30;
     let trackingFrameIndex = 0;
     let calibrationFinalized = false;
+    let detailedDiagnosticsEnabled = true;
+    let pointDeadbandRevision = 0;
+    let lastDeadbandEffect:
+      ReturnType<
+        DeadbandEffectMonitor['measure']
+      > | null = null;
 
     const updateTrackingRate = (
       timestampMs: number,
@@ -1903,6 +2264,7 @@ export async function createMaskedCameraStream(
           } else if (everSeenFace) {
             smoother.reset();
             pointDeadband.reset();
+            deadbandEffectMonitor.reset();
             globalGate.reset();
             controller.faceMatrixFilter.reset();
             controller.faceScaleFilter.reset();
@@ -2023,6 +2385,59 @@ export async function createMaskedCameraStream(
               pixelsPerMetricUnit,
             );
 
+          const deadbandEffect =
+            deadbandEffectMonitor.measure(
+              deformationEstimate.metricLandmarks,
+              deadbandedMetricLandmarks,
+              livePoseEstimate.faceMatrix,
+              pixelsPerMetricUnit,
+            );
+
+          lastDeadbandEffect =
+            deadbandEffect;
+
+          const totalDeadbandPoints =
+            deadbandedMetricLandmarks.length;
+
+          const heldCount =
+            pointDeadband.getHeldCount();
+
+          const changedCount =
+            pointDeadband.getChangedCount();
+
+          debugLogger?.log(
+            'point_deadband_effect',
+            {
+              frameIndex:
+                trackingFrameIndex,
+              revision:
+                pointDeadbandRevision,
+              thresholdPx:
+                pointDeadband.getThresholdPx(),
+              decisionDistancePx:
+                pointDeadband.getDecisionDistancePx(),
+              heldCount,
+              changedCount,
+              totalPoints:
+                totalDeadbandPoints,
+              heldRatio:
+                totalDeadbandPoints > 0
+                  ? heldCount /
+                    totalDeadbandPoints
+                  : 0,
+              changedRatio:
+                totalDeadbandPoints > 0
+                  ? changedCount /
+                    totalDeadbandPoints
+                  : 0,
+              pixelsPerMetricUnit,
+              ...deadbandEffect,
+              stage:
+                'post-estimator-metric',
+            },
+            now,
+          );
+
           for (
             const geometry of
             controller.customFaceGeometries
@@ -2056,7 +2471,10 @@ export async function createMaskedCameraStream(
             );
 
           if (gateResult.evaluated) {
-            if (gateResult.tuning.changed) {
+            if (
+              detailedDiagnosticsEnabled &&
+              gateResult.tuning.changed
+            ) {
               debugLogger?.log(
                 'auto_tune',
                 {
@@ -2071,7 +2489,10 @@ export async function createMaskedCameraStream(
               );
             }
 
-            debugLogger?.log(
+            if (
+              detailedDiagnosticsEnabled
+            ) {
+              debugLogger?.log(
               'gate_evaluation',
               {
                 frameIndex:
@@ -2165,7 +2586,8 @@ export async function createMaskedCameraStream(
                   ),
               },
               now,
-            );
+              );
+            }
 
             const convergedStatus =
               globalGate.getStatus();
@@ -2223,15 +2645,33 @@ export async function createMaskedCameraStream(
                 now,
               );
 
-              // Full coordinate serialization, statistical tuning and network
-              // log uploads end here. The lightweight fixed gate remains active.
-              debugLogger?.stop({
-                reason:
-                  'calibration_converged',
-                calibration,
-              });
+              // Stop only the heavy coordinate dumps. Keep the session logger
+              // alive so every later slider change and its measured effect are
+              // still recorded until the camera actually stops.
+              detailedDiagnosticsEnabled =
+                false;
+
+              debugLogger?.log(
+                'diagnostic_mode_change',
+                {
+                  frameIndex:
+                    trackingFrameIndex,
+                  detailedDiagnosticsEnabled:
+                    false,
+                  lightweightEvents: [
+                    'point_deadband_effect',
+                    'point_deadband_config_change',
+                    'tracking_frame',
+                  ],
+                  reason:
+                    'calibration_converged',
+                },
+                now,
+              );
             }
-          } else {
+          } else if (
+            detailedDiagnosticsEnabled
+          ) {
             debugLogger?.log(
               'tracking_tick',
               {
@@ -2458,17 +2898,38 @@ export async function createMaskedCameraStream(
     const setPointDeadbandPx = (
       threshold: number,
     ) => {
+      const previousPx =
+        pointDeadband.getThresholdPx();
+
       pointDeadband.setThresholdPx(
         threshold,
       );
 
+      pointDeadbandRevision++;
+
       debugLogger?.log(
-        'config_change',
+        'point_deadband_config_change',
         {
-          pointDeadbandPx:
+          frameIndex:
+            trackingFrameIndex,
+          revision:
+            pointDeadbandRevision,
+          fromPx:
+            previousPx,
+          requestedPx:
+            threshold,
+          toPx:
             pointDeadband.getThresholdPx(),
-          pointDeadbandHeldCount:
+          heldCountBeforeChange:
             pointDeadband.getHeldCount(),
+          changedCountBeforeChange:
+            pointDeadband.getChangedCount(),
+          decisionDistanceBeforeChangePx:
+            pointDeadband.getDecisionDistancePx(),
+          effectBeforeChange:
+            lastDeadbandEffect,
+          stage:
+            'post-estimator-metric',
         },
       );
     };
