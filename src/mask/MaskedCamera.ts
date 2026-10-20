@@ -1,51 +1,63 @@
 export type CameraMode = 'mask' | 'original';
 
-export interface MaskTuning {
-  minCutoff: number;
-  beta: number;
-}
-
-export interface AdaptiveFilterStatus {
-  phase: 'warming' | 'adaptive';
-  minCutoff: number;
-  beta: number;
+export interface TrackingStatus {
   fps: number;
   frameIntervalMs: number;
-  noiseFloor: number;
-  stationaryJitter: number;
-  trackingError: number;
-  responseRatio: number;
-  stationaryRatio: number;
+  smoothing: 'mediapipe-relative-velocity';
+  windowSize: number;
+  velocityScale: number;
 }
 
 export interface MaskedCameraController {
   stream: MediaStream;
   stop: () => void;
-  getAdaptiveStatus: () => AdaptiveFilterStatus;
+  getTrackingStatus: () => TrackingStatus;
 }
 
-export const DEFAULT_MASK_TUNING: MaskTuning = {
-  minCutoff: 0.001,
-  beta: 1.0,
+type NormalizedLandmark = {
+  x: number;
+  y: number;
+  z: number;
+};
+
+type FaceMeshDetectionResult = {
+  faceLandmarks: NormalizedLandmark[][];
+  faceBlendshapes: unknown[];
 };
 
 type MindAREstimate = {
   metricLandmarks: number[][];
   faceMatrix: number[];
   faceScale: number;
+  blendshapes?: unknown;
 };
 
-type MutableOneEuroFilter = {
-  minCutOff: number;
-  beta: number;
+type FaceGeometryLike = {
+  updatePositions: (metricLandmarks: number[][]) => void;
+};
+
+type FaceMeshHelperLike = {
+  detect: (
+    input: HTMLVideoElement | HTMLCanvasElement,
+  ) => Promise<FaceMeshDetectionResult>;
+};
+
+type EstimatorLike = {
+  estimate: (landmarks: number[][]) => MindAREstimate;
 };
 
 type MindARController = {
-  filterMinCF: number;
-  filterBeta: number;
-  landmarkFilters: MutableOneEuroFilter[];
-  faceMatrixFilter: MutableOneEuroFilter;
-  faceScaleFilter: MutableOneEuroFilter;
+  processingVideo?: boolean;
+  flipFace: boolean;
+  faceMeshHelper: FaceMeshHelperLike;
+  estimator: EstimatorLike;
+  customFaceGeometries: FaceGeometryLike[];
+  lastEstimateResult: MindAREstimate | null;
+  onUpdate: (payload: {
+    hasFace: boolean;
+    estimateResult?: MindAREstimate;
+  }) => void;
+  stopProcessVideo: () => void;
 };
 
 type FaceMeshLike = {
@@ -54,14 +66,6 @@ type FaceMeshLike = {
     map?: unknown;
     transparent?: boolean;
     needsUpdate?: boolean;
-  };
-  geometry: {
-    attributes: {
-      position: {
-        array: Float32Array;
-        needsUpdate: boolean;
-      };
-    };
   };
 };
 
@@ -81,7 +85,6 @@ type MindARThreeInstance = {
   video?: HTMLVideoElement;
   controller: MindARController;
   addFaceMesh: () => FaceMeshLike;
-  getLatestEstimate: () => MindAREstimate | null;
   start: () => Promise<void>;
   stop: () => void;
 };
@@ -108,182 +111,263 @@ type ThreeModule = {
   };
 };
 
+type WindowElement = {
+  distance: number;
+  durationMs: number;
+};
+
 const MINDAR_SPECIFIER = 'mindar-face-three';
 const THREE_SPECIFIER = 'three';
 
 const FACE_TEXTURE_URL =
   'https://cdn.jsdelivr.net/gh/hiukim/mind-ar-js@1.2.5/examples/face-tracking/assets/sparkar/face-mask.png';
 
-const FACE_VERTEX_COUNT = 468;
 const FACE_LOSS_GRACE_MS = 420;
 
-// Stable points only. Mouth and most eyelid points are intentionally excluded
-// so expression changes are not mistaken for tracker jitter.
-const ADAPTIVE_LANDMARKS = [
-  1, 4, 5, 10, 21, 33, 54, 67, 93, 127, 133, 152,
-  162, 168, 197, 234, 263, 284, 297, 323, 356, 362, 389, 454,
-];
+// Exact Face Effect smoothing parameters used by MediaPipe's
+// face_landmarks_smoothing.pbtxt.
+const VELOCITY_FILTER_WINDOW_SIZE = 5;
+const VELOCITY_FILTER_SCALE = 20.0;
+const ASSUMED_FRAME_MS = 1000 / 30;
 
-const ADAPTIVE_WARMUP_MS = 1800;
-const ADAPTIVE_MIN_WARMUP_FRAMES = 40;
-const ADAPTIVE_TUNE_INTERVAL_MS = 350;
+/**
+ * TypeScript port of MediaPipe RelativeVelocityFilter.
+ *
+ * Source behavior:
+ * - keep a short velocity window
+ * - normalize movement by current object scale
+ * - high velocity => high alpha => follow quickly
+ * - low velocity => low alpha => stabilize
+ *
+ * This is intentionally used BEFORE MindAR's Estimator, so the same smoothed
+ * landmarks produce both the face pose matrix and the deforming face geometry.
+ */
+class RelativeVelocityFilter {
+  private lastValue = 0;
+  private lastValueScale = 1;
+  private lastTimestampMs = -1;
+  private readonly window: WindowElement[] = [];
+  private lowPassInitialized = false;
+  private lowPassValue = 0;
 
-const MIN_CUTOFF_MIN = 0.0001;
-const MIN_CUTOFF_MAX = 0.02;
-const BETA_MIN = 0.05;
-const BETA_MAX = 20;
+  constructor(
+    private readonly maxWindowSize: number,
+    private readonly velocityScale: number,
+  ) {}
 
-function clamp(value: number, min: number, max: number) {
-  return Math.min(max, Math.max(min, value));
-}
-
-function ewma(previous: number, value: number, alpha: number) {
-  if (!Number.isFinite(previous) || previous <= 0) return value;
-  return previous + alpha * (value - previous);
-}
-
-function percentile(values: number[], p: number) {
-  if (values.length === 0) return 0;
-
-  const sorted = [...values].sort((a, b) => a - b);
-  const index = Math.min(
-    sorted.length - 1,
-    Math.max(0, Math.round((sorted.length - 1) * p)),
-  );
-
-  return sorted[index];
-}
-
-function rmsDiff(a: Float32Array, b: Float32Array) {
-  let sum = 0;
-
-  for (let i = 0; i < a.length; i++) {
-    const d = a[i] - b[i];
-    sum += d * d;
+  reset() {
+    this.lastValue = 0;
+    this.lastValueScale = 1;
+    this.lastTimestampMs = -1;
+    this.window.length = 0;
+    this.lowPassInitialized = false;
+    this.lowPassValue = 0;
   }
 
-  return Math.sqrt(sum / Math.max(1, a.length));
-}
-
-function rmsDelta(current: Float32Array, previous: Float32Array) {
-  let sum = 0;
-
-  for (let i = 0; i < current.length; i++) {
-    const d = current[i] - previous[i];
-    sum += d * d;
-  }
-
-  return Math.sqrt(sum / Math.max(1, current.length));
-}
-
-function sanitizeTuning(tuning?: Partial<MaskTuning>): MaskTuning {
-  const value = {
-    ...DEFAULT_MASK_TUNING,
-    ...tuning,
-  };
-
-  return {
-    minCutoff:
-      Number.isFinite(value.minCutoff) && value.minCutoff > 0
-        ? clamp(value.minCutoff, MIN_CUTOFF_MIN, MIN_CUTOFF_MAX)
-        : DEFAULT_MASK_TUNING.minCutoff,
-    beta:
-      Number.isFinite(value.beta) && value.beta >= 0
-        ? clamp(value.beta, BETA_MIN, BETA_MAX)
-        : DEFAULT_MASK_TUNING.beta,
-  };
-}
-
-function setMindARFilterParameters(
-  controller: MindARController,
-  minCutoff: number,
-  beta: number,
-) {
-  controller.filterMinCF = minCutoff;
-  controller.filterBeta = beta;
-
-  for (const filter of controller.landmarkFilters) {
-    filter.minCutOff = minCutoff;
-    filter.beta = beta;
-  }
-
-  controller.faceMatrixFilter.minCutOff = minCutoff;
-  controller.faceMatrixFilter.beta = beta;
-  controller.faceScaleFilter.minCutOff = minCutoff;
-  controller.faceScaleFilter.beta = beta;
-}
-
-function faceScaleFromPositions(raw: Float32Array) {
-  const distance = (a: number, b: number) => {
-    const ai = a * 3;
-    const bi = b * 3;
-
-    return Math.hypot(
-      raw[bi] - raw[ai],
-      raw[bi + 1] - raw[ai + 1],
-      raw[bi + 2] - raw[ai + 2],
-    );
-  };
-
-  const width = distance(234, 454);
-  const height = distance(10, 152);
-
-  return Math.max(1e-6, (width + height) * 0.5);
-}
-
-function extractStableRaw(raw: Float32Array) {
-  const values = new Float32Array(ADAPTIVE_LANDMARKS.length * 3);
-
-  for (let i = 0; i < ADAPTIVE_LANDMARKS.length; i++) {
-    const src = ADAPTIVE_LANDMARKS[i] * 3;
-    const dst = i * 3;
-
-    values[dst] = raw[src];
-    values[dst + 1] = raw[src + 1];
-    values[dst + 2] = raw[src + 2];
-  }
-
-  return values;
-}
-
-function extractStableFiltered(metricLandmarks: number[][]) {
-  const values = new Float32Array(ADAPTIVE_LANDMARKS.length * 3);
-
-  for (let i = 0; i < ADAPTIVE_LANDMARKS.length; i++) {
-    const src = ADAPTIVE_LANDMARKS[i];
-    const dst = i * 3;
-    const point = metricLandmarks[src];
-
-    values[dst] = point[0];
-    values[dst + 1] = point[1];
-    values[dst + 2] = point[2];
-  }
-
-  return values;
-}
-
-function writeMindARFilteredGeometry(
-  faceMesh: FaceMeshLike,
-  estimate: MindAREstimate,
-) {
-  if (
-    !estimate.metricLandmarks ||
-    estimate.metricLandmarks.length < FACE_VERTEX_COUNT
+  apply(
+    timestampMs: number,
+    value: number,
+    valueScale: number,
   ) {
-    return;
+    if (this.lastTimestampMs >= timestampMs) {
+      return value;
+    }
+
+    let alpha = 1;
+
+    if (this.lastTimestampMs !== -1) {
+      // MediaPipe RelativeVelocityFilter's default distance mode is
+      // kLegacyTransition.
+      const distance =
+        value * valueScale -
+        this.lastValue * this.lastValueScale;
+
+      const durationMs =
+        timestampMs - this.lastTimestampMs;
+
+      let cumulativeDistance = distance;
+      let cumulativeDurationMs = durationMs;
+
+      const maxCumulativeDurationMs =
+        (1 + this.window.length) * ASSUMED_FRAME_MS;
+
+      for (const element of this.window) {
+        if (
+          cumulativeDurationMs + element.durationMs >
+          maxCumulativeDurationMs
+        ) {
+          break;
+        }
+
+        cumulativeDistance += element.distance;
+        cumulativeDurationMs += element.durationMs;
+      }
+
+      const durationSeconds =
+        Math.max(0.000001, cumulativeDurationMs / 1000);
+
+      const velocity =
+        cumulativeDistance / durationSeconds;
+
+      alpha =
+        1 -
+        1 /
+          (
+            1 +
+            this.velocityScale *
+              Math.abs(velocity)
+          );
+
+      this.window.unshift({
+        distance,
+        durationMs,
+      });
+
+      if (this.window.length > this.maxWindowSize) {
+        this.window.pop();
+      }
+    }
+
+    this.lastValue = value;
+    this.lastValueScale = valueScale;
+    this.lastTimestampMs = timestampMs;
+
+    if (!this.lowPassInitialized) {
+      this.lowPassInitialized = true;
+      this.lowPassValue = value;
+      return value;
+    }
+
+    this.lowPassValue =
+      alpha * value +
+      (1 - alpha) * this.lowPassValue;
+
+    return this.lowPassValue;
+  }
+}
+
+class FaceLandmarksSmoother {
+  private xFilters: RelativeVelocityFilter[] = [];
+  private yFilters: RelativeVelocityFilter[] = [];
+  private zFilters: RelativeVelocityFilter[] = [];
+
+  reset() {
+    for (const filter of this.xFilters) filter.reset();
+    for (const filter of this.yFilters) filter.reset();
+    for (const filter of this.zFilters) filter.reset();
+
+    this.xFilters = [];
+    this.yFilters = [];
+    this.zFilters = [];
   }
 
-  const position = faceMesh.geometry.attributes.position;
-  const target = position.array;
+  smooth(
+    landmarks: NormalizedLandmark[],
+    timestampMs: number,
+    imageWidth: number,
+    imageHeight: number,
+  ): number[][] {
+    this.ensureFilters(landmarks.length);
 
-  for (let i = 0; i < FACE_VERTEX_COUNT; i++) {
-    const base = i * 3;
-    target[base] = estimate.metricLandmarks[i][0];
-    target[base + 1] = estimate.metricLandmarks[i][1];
-    target[base + 2] = estimate.metricLandmarks[i][2];
+    const pixelLandmarks = landmarks.map((landmark) => [
+      landmark.x * imageWidth,
+      landmark.y * imageHeight,
+      landmark.z * imageWidth,
+    ]);
+
+    const objectScale =
+      this.getObjectScale(pixelLandmarks);
+
+    // This matches MediaPipe LandmarksSmoothingCalculator:
+    // value_scale = 1 / object_scale.
+    const valueScale =
+      1 / Math.max(1e-6, objectScale);
+
+    const output: number[][] =
+      new Array(landmarks.length);
+
+    for (let i = 0; i < landmarks.length; i++) {
+      const point = pixelLandmarks[i];
+
+      const x = this.xFilters[i].apply(
+        timestampMs,
+        point[0],
+        valueScale,
+      );
+
+      const y = this.yFilters[i].apply(
+        timestampMs,
+        point[1],
+        valueScale,
+      );
+
+      const z = this.zFilters[i].apply(
+        timestampMs,
+        point[2],
+        valueScale,
+      );
+
+      output[i] = [
+        x / imageWidth,
+        y / imageHeight,
+        z / imageWidth,
+      ];
+    }
+
+    return output;
   }
 
-  position.needsUpdate = true;
+  private ensureFilters(count: number) {
+    if (this.xFilters.length === count) return;
+
+    this.xFilters = [];
+    this.yFilters = [];
+    this.zFilters = [];
+
+    for (let i = 0; i < count; i++) {
+      this.xFilters.push(
+        new RelativeVelocityFilter(
+          VELOCITY_FILTER_WINDOW_SIZE,
+          VELOCITY_FILTER_SCALE,
+        ),
+      );
+
+      this.yFilters.push(
+        new RelativeVelocityFilter(
+          VELOCITY_FILTER_WINDOW_SIZE,
+          VELOCITY_FILTER_SCALE,
+        ),
+      );
+
+      this.zFilters.push(
+        new RelativeVelocityFilter(
+          VELOCITY_FILTER_WINDOW_SIZE,
+          VELOCITY_FILTER_SCALE,
+        ),
+      );
+    }
+  }
+
+  private getObjectScale(
+    landmarks: number[][],
+  ) {
+    let xMin = Number.POSITIVE_INFINITY;
+    let xMax = Number.NEGATIVE_INFINITY;
+    let yMin = Number.POSITIVE_INFINITY;
+    let yMax = Number.NEGATIVE_INFINITY;
+
+    for (const landmark of landmarks) {
+      xMin = Math.min(xMin, landmark[0]);
+      xMax = Math.max(xMax, landmark[0]);
+      yMin = Math.min(yMin, landmark[1]);
+      yMax = Math.max(yMax, landmark[1]);
+    }
+
+    const objectWidth = xMax - xMin;
+    const objectHeight = yMax - yMin;
+
+    return (objectWidth + objectHeight) / 2;
+  }
 }
 
 async function loadOfficialMindARModules() {
@@ -321,22 +405,49 @@ function createOffscreenContainer() {
   return container;
 }
 
+function createFlippedInput(
+  width: number,
+  height: number,
+) {
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+
+  const context = canvas.getContext('2d');
+
+  if (!context) {
+    throw new Error(
+      'MindAR 얼굴 추적 입력 Canvas를 만들지 못했습니다.',
+    );
+  }
+
+  return {
+    canvas,
+    context,
+  };
+}
+
 export async function createMaskedCameraStream(
   source: MediaStream,
-  tuningInput?: Partial<MaskTuning>,
 ): Promise<MaskedCameraController> {
-  const initialTuning = sanitizeTuning(tuningInput);
   const sourceVideoTrack = source.getVideoTracks()[0];
 
   if (!sourceVideoTrack) {
-    throw new Error('복면 모드에 사용할 카메라 트랙이 없습니다.');
+    throw new Error(
+      '복면 모드에 사용할 카메라 트랙이 없습니다.',
+    );
   }
 
   if (!HTMLCanvasElement.prototype.captureStream) {
-    throw new Error('현재 브라우저는 Canvas 영상 출력을 지원하지 않습니다.');
+    throw new Error(
+      '현재 브라우저는 Canvas 영상 출력을 지원하지 않습니다.',
+    );
   }
 
-  const deviceId = sourceVideoTrack.getSettings().deviceId ?? null;
+  const deviceId =
+    sourceVideoTrack.getSettings().deviceId ?? null;
+
+  // MindAR owns the physical camera while mask mode is active.
   sourceVideoTrack.stop();
 
   const container = createOffscreenContainer();
@@ -344,18 +455,18 @@ export async function createMaskedCameraStream(
   let mindarThree: MindARThreeInstance | undefined;
   let outputStream: MediaStream | undefined;
   let stopped = false;
+  let trackingLoopEnabled = false;
 
   try {
-    const { MindARThree, THREE } = await loadOfficialMindARModules();
+    const { MindARThree, THREE } =
+      await loadOfficialMindARModules();
 
-    // There is exactly one live smoothing stage: MindAR's native One Euro
-    // filters. The adaptive controller below changes these existing filter
-    // objects in-place instead of adding another filter.
+    // MindAR's original post-estimator One Euro stage is not used for the
+    // custom tracking loop below. We keep the official MindAR module for
+    // camera setup, detector, estimator, geometry, matrices and rendering.
     const mindar = new MindARThree({
       container,
       userDeviceId: deviceId,
-      filterMinCF: initialTuning.minCutoff,
-      filterBeta: initialTuning.beta,
     });
 
     mindarThree = mindar;
@@ -367,13 +478,16 @@ export async function createMaskedCameraStream(
       0xbbbbff,
       1,
     );
+
     scene.add(light);
 
     const faceMesh = mindar.addFaceMesh();
 
-    const texture = new THREE.TextureLoader().load(
-      FACE_TEXTURE_URL,
-    );
+    const texture =
+      new THREE.TextureLoader().load(
+        FACE_TEXTURE_URL,
+      );
+
     faceMesh.material.map = texture;
     faceMesh.material.transparent = true;
     faceMesh.material.needsUpdate = true;
@@ -384,11 +498,201 @@ export async function createMaskedCameraStream(
 
     const video = mindar.video;
 
-    if (!video || video.videoWidth <= 0 || video.videoHeight <= 0) {
+    if (
+      !video ||
+      video.videoWidth <= 0 ||
+      video.videoHeight <= 0
+    ) {
       throw new Error(
         'MindAR FaceMesh 카메라 영상을 초기화하지 못했습니다.',
       );
     }
+
+    const controller = mindar.controller;
+
+    // Stop MindAR's built-in:
+    // detect -> estimate(raw) -> OneEuro(metric/matrix) -> geometry(raw)
+    //
+    // We replace only that loop with:
+    // detect -> RelativeVelocity(raw landmarks) -> estimate(smoothed)
+    //        -> matrix + geometry from the SAME smoothed landmarks.
+    controller.stopProcessVideo();
+
+    // Let any already-running detector promise finish before our loop starts.
+    await new Promise<void>((resolve) =>
+      requestAnimationFrame(() =>
+        requestAnimationFrame(() => resolve()),
+      ),
+    );
+
+    const smoother =
+      new FaceLandmarksSmoother();
+
+    const flipped =
+      controller.flipFace
+        ? createFlippedInput(
+            video.videoWidth,
+            video.videoHeight,
+          )
+        : null;
+
+    let lastSeenAt = 0;
+    let everSeenFace = false;
+
+    let lastTrackingAt = 0;
+    let frameIntervalMs = 33.3;
+    let fps = 30;
+
+    const updateTrackingRate = (
+      timestampMs: number,
+    ) => {
+      if (lastTrackingAt > 0) {
+        const dt =
+          timestampMs - lastTrackingAt;
+
+        frameIntervalMs +=
+          0.12 * (dt - frameIntervalMs);
+
+        fps =
+          1000 /
+          Math.max(1, frameIntervalMs);
+      }
+
+      lastTrackingAt = timestampMs;
+    };
+
+    trackingLoopEnabled = true;
+
+    const processFrame = async () => {
+      if (
+        stopped ||
+        !trackingLoopEnabled
+      ) {
+        return;
+      }
+
+      let detectionInput:
+        | HTMLVideoElement
+        | HTMLCanvasElement = video;
+
+      if (flipped) {
+        flipped.context.clearRect(
+          0,
+          0,
+          flipped.canvas.width,
+          flipped.canvas.height,
+        );
+
+        flipped.context.save();
+        flipped.context.translate(
+          flipped.canvas.width,
+          0,
+        );
+        flipped.context.scale(-1, 1);
+
+        flipped.context.drawImage(
+          video,
+          0,
+          0,
+          flipped.canvas.width,
+          flipped.canvas.height,
+        );
+
+        flipped.context.restore();
+        detectionInput = flipped.canvas;
+      }
+
+      try {
+        const results =
+          await controller.faceMeshHelper.detect(
+            detectionInput,
+          );
+
+        if (
+          stopped ||
+          !trackingLoopEnabled
+        ) {
+          return;
+        }
+
+        const now = performance.now();
+        updateTrackingRate(now);
+
+        if (
+          !results.faceLandmarks ||
+          results.faceLandmarks.length === 0
+        ) {
+          controller.lastEstimateResult = null;
+          controller.onUpdate({
+            hasFace: false,
+          });
+
+          smoother.reset();
+
+          if (
+            everSeenFace &&
+            now - lastSeenAt >
+              FACE_LOSS_GRACE_MS
+          ) {
+            faceMesh.visible = false;
+          }
+        } else {
+          const smoothedLandmarks =
+            smoother.smooth(
+              results.faceLandmarks[0],
+              now,
+              video.videoWidth,
+              video.videoHeight,
+            );
+
+          const estimateResult =
+            controller.estimator.estimate(
+              smoothedLandmarks,
+            );
+
+          estimateResult.blendshapes =
+            results.faceBlendshapes?.[0];
+
+          controller.lastEstimateResult =
+            estimateResult;
+
+          // MindARThree's original onUpdate applies the same estimateResult
+          // to faceMesh.matrix and latestEstimate.
+          controller.onUpdate({
+            hasFace: true,
+            estimateResult,
+          });
+
+          // Crucially, geometry now receives the same smoothed estimate that
+          // generated faceMatrix. No raw-landmark geometry branch remains.
+          for (
+            const geometry of
+            controller.customFaceGeometries
+          ) {
+            geometry.updatePositions(
+              estimateResult.metricLandmarks,
+            );
+          }
+
+          lastSeenAt = now;
+          everSeenFace = true;
+          faceMesh.visible = true;
+        }
+      } finally {
+        if (
+          !stopped &&
+          trackingLoopEnabled
+        ) {
+          requestAnimationFrame(
+            () => void processFrame(),
+          );
+        }
+      }
+    };
+
+    requestAnimationFrame(
+      () => void processFrame(),
+    );
 
     const outputScale = Math.min(
       1,
@@ -396,20 +700,30 @@ export async function createMaskedCameraStream(
       540 / video.videoHeight,
     );
 
-    const outputCanvas = document.createElement('canvas');
+    const outputCanvas =
+      document.createElement('canvas');
+
     outputCanvas.width = Math.max(
       320,
-      Math.round(video.videoWidth * outputScale),
-    );
-    outputCanvas.height = Math.max(
-      240,
-      Math.round(video.videoHeight * outputScale),
+      Math.round(
+        video.videoWidth * outputScale,
+      ),
     );
 
-    const ctx = outputCanvas.getContext('2d', {
-      alpha: false,
-      desynchronized: true,
-    });
+    outputCanvas.height = Math.max(
+      240,
+      Math.round(
+        video.videoHeight * outputScale,
+      ),
+    );
+
+    const ctx = outputCanvas.getContext(
+      '2d',
+      {
+        alpha: false,
+        desynchronized: true,
+      },
+    );
 
     if (!ctx) {
       throw new Error(
@@ -417,8 +731,11 @@ export async function createMaskedCameraStream(
       );
     }
 
-    const canvasStream = outputCanvas.captureStream(60);
-    const outputVideoTrack = canvasStream.getVideoTracks()[0];
+    const canvasStream =
+      outputCanvas.captureStream(60);
+
+    const outputVideoTrack =
+      canvasStream.getVideoTracks()[0];
 
     if (!outputVideoTrack) {
       throw new Error(
@@ -433,299 +750,22 @@ export async function createMaskedCameraStream(
       ...source.getAudioTracks(),
     ]);
 
-    let minCutoff = initialTuning.minCutoff;
-    let beta = initialTuning.beta;
-
-    let phase: AdaptiveFilterStatus['phase'] = 'warming';
-    let adaptiveStartedAt = performance.now();
-    let lastTuneAt = adaptiveStartedAt;
-    let lastEstimateAt = 0;
-    let lastEstimate: MindAREstimate | null = null;
-
-    let previousRaw: Float32Array | null = null;
-    let previousFiltered: Float32Array | null = null;
-
-    const warmupMotion: number[] = [];
-
-    let frameIntervalMs = 33.3;
-    let fps = 30;
-    let noiseFloor = 0;
-    let stationaryJitter = 0;
-    let trackingError = 0;
-    let responseRatio = 1;
-    let stationaryRatio = 0.5;
-
-    let stationaryFrames = 0;
-    let movingFrames = 0;
-    let stationaryJitterSum = 0;
-    let movingTrackingSum = 0;
-    let movingResponseSum = 0;
-
-    let lastSeenAt = 0;
-    let everSeenFace = false;
-
-    const updateAdaptiveParameters = (now: number) => {
-      if (phase !== 'adaptive') return;
-      if (now - lastTuneAt < ADAPTIVE_TUNE_INTERVAL_MS) return;
-
-      lastTuneAt = now;
-
-      const total = stationaryFrames + movingFrames;
-      const localStationaryRatio =
-        total > 0 ? stationaryFrames / total : stationaryRatio;
-
-      stationaryRatio = ewma(
-        stationaryRatio,
-        localStationaryRatio,
-        0.25,
-      );
-
-      const localJitter =
-        stationaryFrames > 0
-          ? stationaryJitterSum / stationaryFrames
-          : stationaryJitter;
-
-      const localMovingTracking =
-        movingFrames > 0
-          ? movingTrackingSum / movingFrames
-          : trackingError;
-
-      const localResponse =
-        movingFrames > 0
-          ? movingResponseSum / movingFrames
-          : responseRatio;
-
-      stationaryJitter = ewma(
-        stationaryJitter,
-        localJitter,
-        0.3,
-      );
-
-      trackingError = ewma(
-        trackingError,
-        localMovingTracking,
-        0.25,
-      );
-
-      responseRatio = ewma(
-        responseRatio,
-        localResponse,
-        0.25,
-      );
-
-      const stationaryWeight = clamp(stationaryRatio, 0, 1);
-      const movingWeight = 1 - stationaryWeight;
-
-      const safeNoise = Math.max(noiseFloor, 1e-6);
-      const jitterTarget = Math.max(safeNoise * 0.45, 1e-6);
-
-      const jitterExcess = clamp(
-        stationaryJitter / jitterTarget - 1,
-        0,
-        3,
-      );
-
-      const responseDeficit = clamp(
-        0.92 - responseRatio,
-        0,
-        0.7,
-      );
-
-      const trackingExcess = clamp(
-        trackingError / Math.max(safeNoise * 3, 1e-5) - 1,
-        0,
-        3,
-      );
-
-      // Slow systems need a little more responsiveness because the visual
-      // distance travelled between processed frames is larger.
-      const performanceDeficit = clamp(
-        (frameIntervalMs - 33.3) / 33.3,
-        0,
-        1.5,
-      );
-
-      const minCutoffDelta =
-        -0.035 * stationaryWeight * jitterExcess +
-        0.05 * movingWeight * responseDeficit +
-        0.015 * movingWeight * trackingExcess +
-        0.01 * performanceDeficit * movingWeight;
-
-      const betaDelta =
-        -0.02 * stationaryWeight * jitterExcess +
-        0.12 * movingWeight * responseDeficit +
-        0.035 * movingWeight * trackingExcess +
-        0.025 * performanceDeficit * movingWeight;
-
-      minCutoff = clamp(
-        minCutoff * Math.exp(minCutoffDelta),
-        MIN_CUTOFF_MIN,
-        MIN_CUTOFF_MAX,
-      );
-
-      beta = clamp(
-        beta * Math.exp(betaDelta),
-        BETA_MIN,
-        BETA_MAX,
-      );
-
-      setMindARFilterParameters(
-        mindar.controller,
-        minCutoff,
-        beta,
-      );
-
-      stationaryFrames = 0;
-      movingFrames = 0;
-      stationaryJitterSum = 0;
-      movingTrackingSum = 0;
-      movingResponseSum = 0;
-    };
-
-    const processAdaptiveSample = (
-      now: number,
-      estimate: MindAREstimate,
-    ) => {
-      if (estimate === lastEstimate) return;
-
-      const rawPositions =
-        faceMesh.geometry.attributes.position.array;
-
-      const raw = extractStableRaw(rawPositions);
-      const filtered = extractStableFiltered(
-        estimate.metricLandmarks,
-      );
-
-      const scale = faceScaleFromPositions(rawPositions);
-
-      if (lastEstimateAt > 0) {
-        const dt = Math.max(1, now - lastEstimateAt);
-
-        frameIntervalMs = ewma(
-          frameIntervalMs,
-          dt,
-          0.12,
-        );
-
-        fps = 1000 / Math.max(1, frameIntervalMs);
-      }
-
-      if (previousRaw && previousFiltered) {
-        const rawMotion =
-          rmsDelta(raw, previousRaw) / scale;
-
-        const filteredMotion =
-          rmsDelta(filtered, previousFiltered) / scale;
-
-        const currentTrackingError =
-          rmsDiff(filtered, raw) / scale;
-
-        trackingError = ewma(
-          trackingError,
-          currentTrackingError,
-          0.08,
-        );
-
-        if (phase === 'warming') {
-          warmupMotion.push(rawMotion);
-
-          if (warmupMotion.length > 180) {
-            warmupMotion.shift();
-          }
-
-          const warmupElapsed = now - adaptiveStartedAt;
-
-          if (
-            warmupElapsed >= ADAPTIVE_WARMUP_MS &&
-            warmupMotion.length >= ADAPTIVE_MIN_WARMUP_FRAMES
-          ) {
-            noiseFloor = Math.max(
-              1e-6,
-              percentile(warmupMotion, 0.35),
-            );
-
-            phase = 'adaptive';
-            lastTuneAt = now;
-          }
-        } else {
-          const stationaryThreshold = Math.max(
-            1e-6,
-            noiseFloor * 2.0,
-          );
-
-          const stationary =
-            rawMotion <= stationaryThreshold;
-
-          if (stationary) {
-            stationaryFrames++;
-            stationaryJitterSum += filteredMotion;
-
-            // Slowly follow changes in the camera's own noise floor.
-            noiseFloor = ewma(
-              noiseFloor,
-              rawMotion,
-              0.025,
-            );
-          } else {
-            movingFrames++;
-            movingTrackingSum += currentTrackingError;
-            movingResponseSum += clamp(
-              filteredMotion / Math.max(rawMotion, 1e-6),
-              0,
-              2,
-            );
-          }
-
-          updateAdaptiveParameters(now);
-        }
-      }
-
-      previousRaw = raw;
-      previousFiltered = filtered;
-      lastEstimate = estimate;
-      lastEstimateAt = now;
-    };
-
-    renderer.setAnimationLoop((now) => {
+    renderer.setAnimationLoop(() => {
       if (stopped) return;
 
-      const estimate = mindar.getLatestEstimate();
+      renderer.render(
+        scene,
+        camera,
+      );
 
-      if (estimate) {
-        lastSeenAt = now;
-        everSeenFace = true;
-        faceMesh.visible = true;
-
-        // Read the raw geometry first, then update the adaptive parameters.
-        processAdaptiveSample(now, estimate);
-
-        // MindAR's controller already produced the single filtered landmark
-        // set. The upstream geometry update uses raw points, so copy the
-        // filtered result back into the visible mesh before rendering.
-        writeMindARFilteredGeometry(faceMesh, estimate);
-      } else if (
-        everSeenFace &&
-        now - lastSeenAt <= FACE_LOSS_GRACE_MS
-      ) {
-        faceMesh.visible = true;
-      } else if (everSeenFace) {
-        faceMesh.visible = false;
-
-        // A long tracking loss is a new calibration context.
-        phase = 'warming';
-        adaptiveStartedAt = now;
-        warmupMotion.length = 0;
-        previousRaw = null;
-        previousFiltered = null;
-        lastEstimate = null;
-        lastEstimateAt = 0;
-      }
-
-      renderer.render(scene, camera);
-
+      // Camera background is mirrored for the local/self-view.
       ctx.save();
-      ctx.translate(outputCanvas.width, 0);
+      ctx.translate(
+        outputCanvas.width,
+        0,
+      );
       ctx.scale(-1, 1);
+
       ctx.drawImage(
         video,
         0,
@@ -733,6 +773,7 @@ export async function createMaskedCameraStream(
         outputCanvas.width,
         outputCanvas.height,
       );
+
       ctx.restore();
 
       ctx.drawImage(
@@ -744,22 +785,23 @@ export async function createMaskedCameraStream(
       );
     });
 
-    const getAdaptiveStatus = (): AdaptiveFilterStatus => ({
-      phase,
-      minCutoff,
-      beta,
-      fps,
-      frameIntervalMs,
-      noiseFloor,
-      stationaryJitter,
-      trackingError,
-      responseRatio,
-      stationaryRatio,
-    });
+    const getTrackingStatus =
+      (): TrackingStatus => ({
+        fps,
+        frameIntervalMs,
+        smoothing:
+          'mediapipe-relative-velocity',
+        windowSize:
+          VELOCITY_FILTER_WINDOW_SIZE,
+        velocityScale:
+          VELOCITY_FILTER_SCALE,
+      });
 
     const stop = () => {
       if (stopped) return;
+
       stopped = true;
+      trackingLoopEnabled = false;
 
       try {
         renderer.setAnimationLoop(null);
@@ -773,17 +815,25 @@ export async function createMaskedCameraStream(
         // no-op
       }
 
-      outputStream?.getVideoTracks().forEach((track) => {
-        if (track.readyState !== 'ended') {
-          track.stop();
-        }
-      });
+      outputStream
+        ?.getVideoTracks()
+        .forEach((track) => {
+          if (
+            track.readyState !== 'ended'
+          ) {
+            track.stop();
+          }
+        });
 
-      source.getAudioTracks().forEach((track) => {
-        if (track.readyState !== 'ended') {
-          track.stop();
-        }
-      });
+      source
+        .getAudioTracks()
+        .forEach((track) => {
+          if (
+            track.readyState !== 'ended'
+          ) {
+            track.stop();
+          }
+        });
 
       try {
         renderer.dispose?.();
@@ -803,13 +853,16 @@ export async function createMaskedCameraStream(
     return {
       stream: outputStream,
       stop,
-      getAdaptiveStatus,
+      getTrackingStatus,
     };
   } catch (error) {
     stopped = true;
+    trackingLoopEnabled = false;
 
     try {
-      mindarThree?.renderer.setAnimationLoop(null);
+      mindarThree?.renderer.setAnimationLoop(
+        null,
+      );
     } catch {
       // no-op
     }
@@ -820,11 +873,15 @@ export async function createMaskedCameraStream(
       // no-op
     }
 
-    source.getAudioTracks().forEach((track) => {
-      if (track.readyState !== 'ended') {
-        track.stop();
-      }
-    });
+    source
+      .getAudioTracks()
+      .forEach((track) => {
+        if (
+          track.readyState !== 'ended'
+        ) {
+          track.stop();
+        }
+      });
 
     container.remove();
 
