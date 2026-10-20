@@ -1,6 +1,7 @@
 ﻿import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   createMaskedCameraStream,
+  DEFAULT_DEADBAND_THRESHOLD,
   type CameraMode,
   type MaskedCameraController,
   type TrackingStatus,
@@ -33,6 +34,8 @@ export default function DeviceCheck({
   const [cameraMode, setCameraMode] = useState<CameraMode>('mask');
   const [trackingStatus, setTrackingStatus] =
     useState<TrackingStatus | null>(null);
+  const [deadbandThreshold, setDeadbandThreshold] =
+    useState(DEFAULT_DEADBAND_THRESHOLD);
 
   useEffect(() => {
     if (previewRef.current) {
@@ -163,6 +166,9 @@ export default function DeviceCheck({
           const controller = await createMaskedCameraStream(raw);
 
           maskControllerRef.current = controller;
+          controller.setDeadbandThreshold(
+            deadbandThreshold,
+          );
           outgoing = controller.stream;
           setTrackingStatus(controller.getTrackingStatus());
         } catch (maskError) {
@@ -340,15 +346,44 @@ export default function DeviceCheck({
               </div>
 
               <p className="muted-text">
-                Relative Velocity smoothing 뒤에 각 landmark의 최근 변화량을
-                rolling median/MAD로 학습하는 adaptive deadband를 적용합니다.
-                학습된 오차범위 안의 미세한 변화는 이전 좌표를 유지하고,
-                범위를 벗어나 실제 움직임으로 판단되면 즉시 통과시킵니다.
+                Relative Velocity smoothing 뒤에 단순 absolute deadband를 적용합니다.
+                각 landmark의 현재 x/y/z 값과 마지막으로 실제 반영된 값을 비교해서,
+                차이가 threshold 이하이면 좌표를 전혀 바꾸지 않고 threshold를 넘으면
+                현재 좌표를 즉시 반영합니다.
               </p>
 
               <div className="preview-badge">
-                Relative Velocity · window 5 · velocity scale 20 · adaptive MAD deadband
+                Relative Velocity · window 5 · velocity scale 20 · simple absolute deadband
               </div>
+
+              <label>
+                <span>
+                  Deadband threshold · {deadbandThreshold.toFixed(4)}
+                </span>
+                <input
+                  type="range"
+                  min="0"
+                  max="0.01"
+                  step="0.0001"
+                  value={deadbandThreshold}
+                  onChange={(e) => {
+                    const value = Number(e.target.value);
+                    setDeadbandThreshold(value);
+                    maskControllerRef.current
+                      ?.setDeadbandThreshold(value);
+                    setTrackingStatus(
+                      maskControllerRef.current
+                        ?.getTrackingStatus() ?? null,
+                    );
+                  }}
+                  disabled={busy || ready}
+                />
+              </label>
+
+              <p className="muted-text">
+                0이면 deadband를 끕니다. 값을 올릴수록 미세한 메쉬 흔들림을
+                더 강하게 고정하고, 너무 높이면 작은 표정 변화가 늦게 반영됩니다.
+              </p>
 
               <div className="device-grid">
                 <label>
@@ -388,13 +423,13 @@ export default function DeviceCheck({
                 </label>
 
                 <label>
-                  <span>평균 noise radius</span>
+                  <span>현재 threshold</span>
                   <input
                     readOnly
                     value={
                       trackingStatus
-                        ? trackingStatus.deadbandNoiseRadius.toFixed(6)
-                        : '-'
+                        ? trackingStatus.deadbandThreshold.toFixed(4)
+                        : deadbandThreshold.toFixed(4)
                     }
                   />
                 </label>
