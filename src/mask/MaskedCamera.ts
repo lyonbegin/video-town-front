@@ -60,12 +60,14 @@ const DEFAULT_ONE_EURO_BETA = 4.0;
 // Fixed per-landmark 3D deadband for mesh deformation.
 // Pixel-equivalent distance:
 // sqrt((dx*width)^2 + (dy*height)^2 + (dz*width)^2)
-const POINT_DEADBAND_3D_PX = 1.5;
+export const DEFAULT_POINT_DEADBAND_3D_PX = 2.0;
+const MAX_POINT_DEADBAND_3D_PX = 10.0;
 
 export interface MaskedCameraController {
   stream: MediaStream;
   stop: () => void;
   setGlobalThresholdPx: (threshold: number) => void;
+  setPointDeadbandPx: (threshold: number) => void;
   setVerificationHz: (hz: number) => void;
   setAutoTuningEnabled: (enabled: boolean) => void;
   getTrackingStatus: () => TrackingStatus;
@@ -1109,8 +1111,29 @@ class Absolute3DPointDeadband {
   private heldCount = 0;
 
   constructor(
-    private readonly thresholdPx: number,
-  ) {}
+    private thresholdPx: number,
+  ) {
+    this.setThresholdPx(
+      thresholdPx,
+    );
+  }
+
+  setThresholdPx(
+    thresholdPx: number,
+  ) {
+    this.thresholdPx =
+      Math.min(
+        MAX_POINT_DEADBAND_3D_PX,
+        Math.max(
+          0,
+          Number.isFinite(
+            thresholdPx,
+          )
+            ? thresholdPx
+            : DEFAULT_POINT_DEADBAND_3D_PX,
+        ),
+      );
+  }
 
   reset() {
     this.heldPoints = [];
@@ -1637,7 +1660,7 @@ export async function createMaskedCameraStream(
 
     const pointDeadband =
       new Absolute3DPointDeadband(
-        POINT_DEADBAND_3D_PX,
+        DEFAULT_POINT_DEADBAND_3D_PX,
       );
 
     const globalGate =
@@ -2335,6 +2358,24 @@ export async function createMaskedCameraStream(
       );
     };
 
+    const setPointDeadbandPx = (
+      threshold: number,
+    ) => {
+      pointDeadband.setThresholdPx(
+        threshold,
+      );
+
+      debugLogger?.log(
+        'config_change',
+        {
+          pointDeadbandPx:
+            pointDeadband.getThresholdPx(),
+          pointDeadbandHeldCount:
+            pointDeadband.getHeldCount(),
+        },
+      );
+    };
+
     const setVerificationHz = (
       hz: number,
     ) => {
@@ -2450,6 +2491,7 @@ export async function createMaskedCameraStream(
       stream: outputStream,
       stop,
       setGlobalThresholdPx,
+      setPointDeadbandPx,
       setVerificationHz,
       setAutoTuningEnabled,
       getTrackingStatus,

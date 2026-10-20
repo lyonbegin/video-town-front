@@ -3,6 +3,7 @@ import {
   createMaskedCameraStream,
   DEFAULT_GLOBAL_THRESHOLD_PX,
   DEFAULT_GATE_VERIFICATION_HZ,
+  DEFAULT_POINT_DEADBAND_3D_PX,
   type CameraMode,
   type MaskedCameraController,
   type TrackingStatus,
@@ -39,6 +40,8 @@ export default function DeviceCheck({
     useState(DEFAULT_GLOBAL_THRESHOLD_PX);
   const [verificationHz, setVerificationHz] =
     useState(DEFAULT_GATE_VERIFICATION_HZ);
+  const [pointDeadbandPx, setPointDeadbandPx] =
+    useState(DEFAULT_POINT_DEADBAND_3D_PX);
   const [autoTuningEnabled, setAutoTuningEnabled] =
     useState(true);
   const [debugSession, setDebugSession] =
@@ -184,6 +187,10 @@ export default function DeviceCheck({
               globalThresholdPx,
             );
           }
+
+          controller.setPointDeadbandPx(
+            pointDeadbandPx,
+          );
 
           controller.setVerificationHz(
             verificationHz,
@@ -377,8 +384,37 @@ export default function DeviceCheck({
               </p>
 
               <div className="preview-badge">
-                MindAR OneEuro auto-tune · 3D point deadband 1.5px · adaptive deformation gate
+                MindAR OneEuro auto-tune · 3D point deadband {pointDeadbandPx.toFixed(2)}px · adaptive deformation gate
               </div>
+
+              <label>
+                <span>
+                  3D point deadband · {pointDeadbandPx.toFixed(2)} px
+                </span>
+                <input
+                  type="range"
+                  min="0"
+                  max="10"
+                  step="0.25"
+                  value={pointDeadbandPx}
+                  onChange={(e) => {
+                    const value = Number(e.target.value);
+                    setPointDeadbandPx(value);
+                    maskControllerRef.current
+                      ?.setPointDeadbandPx(value);
+                    setTrackingStatus(
+                      maskControllerRef.current
+                        ?.getTrackingStatus() ?? null,
+                    );
+                  }}
+                  disabled={busy}
+                />
+              </label>
+
+              <p className="muted-text">
+                0px이면 개별 점 deadband를 사실상 끕니다. 10px까지 실시간으로 변경되며
+                값을 바꾸는 즉시 현재 복면 메쉬에 적용됩니다.
+              </p>
 
               <label>
                 <span>
@@ -608,13 +644,13 @@ export default function DeviceCheck({
                 </label>
 
                 <label>
-                  <span>3D point deadband</span>
+                  <span>3D point deadband 상태</span>
                   <input
                     readOnly
                     value={
                       trackingStatus
                         ? `${trackingStatus.pointDeadbandPx.toFixed(2)} px / ${trackingStatus.pointDeadbandHeldCount} held`
-                        : '1.50 px'
+                        : `${pointDeadbandPx.toFixed(2)} px`
                     }
                   />
                 </label>
