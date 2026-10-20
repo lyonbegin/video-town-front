@@ -50,6 +50,8 @@ export interface TrackingStatus {
 export const DEFAULT_GLOBAL_THRESHOLD_PX = 3.0;
 export const DEFAULT_EXPRESSION_THRESHOLD_PX = 1.5;
 export const DEFAULT_GATE_VERIFICATION_HZ = 15;
+export const MASK_RUNTIME_VERSION =
+  'mask-runtime-20261020-v5';
 
 // Seed selected by replaying the uploaded real session through MindAR 1.2.5's
 // exact OneEuro equation. Runtime tuning below keeps using MindAR's filter;
@@ -2027,7 +2029,17 @@ export async function createMaskedCameraStream(
 
     debugLogger =
       new MaskDebugLogger({
-        version: 'mask-diagnostics-v1',
+        version: 'mask-diagnostics-v2',
+        runtimeVersion:
+          MASK_RUNTIME_VERSION,
+        runtimeFeatures: {
+          metricLandmarkDeadband: true,
+          liveDeadbandSlider: true,
+          pointDeadbandEffectLogging: true,
+          loggingContinuesAfterConvergence: true,
+          runtimeProbeEndpoint: true,
+          latestStatusEndpoint: true,
+        },
         video: {
           width: video.videoWidth,
           height: video.videoHeight,
@@ -2087,6 +2099,53 @@ export async function createMaskedCameraStream(
             ),
           autoTuning: true,
         },
+      });
+
+    void fetch(
+      '/__runtime-probe',
+      {
+        cache: 'no-store',
+      },
+    )
+      .then(async (response) => {
+        const payload =
+          await response.json();
+
+        debugLogger?.log(
+          'runtime_probe',
+          {
+            clientRuntimeVersion:
+              MASK_RUNTIME_VERSION,
+            serverRuntimeVersion:
+              payload?.runtimeVersion ??
+              null,
+            railwayCommitSha:
+              payload?.railwayCommitSha ??
+              null,
+            match:
+              payload?.runtimeVersion ===
+              MASK_RUNTIME_VERSION,
+            serverFeatures:
+              payload?.features ??
+              null,
+          },
+        );
+      })
+      .catch((error) => {
+        debugLogger?.log(
+          'runtime_probe',
+          {
+            clientRuntimeVersion:
+              MASK_RUNTIME_VERSION,
+            serverRuntimeVersion:
+              null,
+            match: false,
+            error:
+              error instanceof Error
+                ? error.message
+                : String(error),
+          },
+        );
       });
 
     // MindAR's built-in loop never started. Our custom path deliberately

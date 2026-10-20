@@ -2,6 +2,7 @@ import {
   createReadStream,
   existsSync,
   mkdirSync,
+  readdirSync,
   statSync,
 } from 'node:fs';
 import {
@@ -24,6 +25,18 @@ const LOG_DIR =
 
 const PORT =
   Number(process.env.PORT) || 4173;
+
+const MASK_RUNTIME_VERSION =
+  'mask-runtime-20261020-v5';
+
+const MASK_RUNTIME_FEATURES = {
+  metricLandmarkDeadband: true,
+  liveDeadbandSlider: true,
+  pointDeadbandEffectLogging: true,
+  loggingContinuesAfterConvergence: true,
+  runtimeProbeEndpoint: true,
+  latestStatusEndpoint: true,
+};
 
 const MAX_BODY_BYTES =
   8 * 1024 * 1024;
@@ -213,6 +226,58 @@ async function handleDebugPost(
           : String(error),
     });
   }
+}
+
+function getLatestSessionId() {
+  const candidates =
+    readdirSync(
+      LOG_DIR,
+      {
+        withFileTypes: true,
+      },
+    )
+      .filter(
+        (entry) =>
+          entry.isFile() &&
+          entry.name.endsWith(
+            '.ndjson',
+          ),
+      )
+      .map((entry) => {
+        const filePath =
+          path.join(
+            LOG_DIR,
+            entry.name,
+          );
+
+        return {
+          sessionId:
+            entry.name.slice(
+              0,
+              -'.ndjson'.length,
+            ),
+          mtimeMs:
+            statSync(
+              filePath,
+            ).mtimeMs,
+        };
+      })
+      .filter(
+        (item) =>
+          isValidSessionId(
+            item.sessionId,
+          ),
+      )
+      .sort(
+        (a, b) =>
+          b.mtimeMs -
+          a.mtimeMs,
+      );
+
+  return (
+    candidates[0]
+      ?.sessionId ?? null
+  );
 }
 
 async function loadRecords(sessionId) {
@@ -1177,6 +1242,159 @@ async function handleDebugSummary(
   return true;
 }
 
+async function handleLatestDebugStatus(
+  pathname,
+  res,
+) {
+  if (
+    pathname !==
+    '/__mask-debug/latest/status.json'
+  ) {
+    return false;
+  }
+
+  const latestSessionId =
+    getLatestSessionId();
+
+  if (!latestSessionId) {
+    sendJson(
+      res,
+      200,
+      {
+        ok: true,
+        runtimeVersion:
+          MASK_RUNTIME_VERSION,
+        railwayCommitSha:
+          process.env
+            .RAILWAY_GIT_COMMIT_SHA ||
+          null,
+        latestSession:
+          null,
+        message:
+          'No diagnostic session exists on this deployment yet.',
+      },
+    );
+
+    return true;
+  }
+
+  const records =
+    await loadRecords(
+      latestSessionId,
+    );
+
+  if (!records) {
+    sendJson(
+      res,
+      404,
+      {
+        ok: false,
+        error:
+          'latest debug session disappeared',
+      },
+    );
+
+    return true;
+  }
+
+  const sessionStart =
+    records.find(
+      (record) =>
+        record?.type ===
+        'session_start',
+    );
+
+  const runtimeProbe =
+    [...records]
+      .reverse()
+      .find(
+        (record) =>
+          record?.type ===
+          'runtime_probe',
+      );
+
+  const deadbandEffects =
+    records.filter(
+      (record) =>
+        record?.type ===
+        'point_deadband_effect',
+    );
+
+  const deadbandConfigChanges =
+    records.filter(
+      (record) =>
+        record?.type ===
+        'point_deadband_config_change',
+    );
+
+  const clientRuntimeVersion =
+    sessionStart?.data
+      ?.runtimeVersion ??
+    runtimeProbe?.data
+      ?.clientRuntimeVersion ??
+    null;
+
+  const pointDeadband =
+    buildPointDeadbandSummary(
+      records,
+    );
+
+  sendJson(
+    res,
+    200,
+    {
+      ok: true,
+      runtimeVersion:
+        MASK_RUNTIME_VERSION,
+      railwayCommitSha:
+        process.env
+          .RAILWAY_GIT_COMMIT_SHA ||
+        null,
+      features:
+        MASK_RUNTIME_FEATURES,
+      latestSession: {
+        sessionId:
+          latestSessionId,
+        clientRuntimeVersion,
+        clientMatchesServer:
+          clientRuntimeVersion ===
+          MASK_RUNTIME_VERSION,
+        staleClientDetected:
+          clientRuntimeVersion !==
+          MASK_RUNTIME_VERSION,
+        recordCount:
+          records.length,
+        runtimeProbe:
+          runtimeProbe?.data ??
+          null,
+        pointDeadbandEffectCount:
+          deadbandEffects.length,
+        pointDeadbandConfigChangeCount:
+          deadbandConfigChanges.length,
+        lastPointDeadbandEffect:
+          deadbandEffects.length > 0
+            ? deadbandEffects[
+                deadbandEffects.length - 1
+              ]?.data ?? null
+            : null,
+        lastPointDeadbandConfigChange:
+          deadbandConfigChanges.length > 0
+            ? deadbandConfigChanges[
+                deadbandConfigChanges.length - 1
+              ]?.data ?? null
+            : null,
+        pointDeadband,
+        effectLoggingActive:
+          deadbandEffects.length > 0,
+        sliderChangeLoggingActive:
+          deadbandConfigChanges.length > 0,
+      },
+    },
+  );
+
+  return true;
+}
+
 async function handleDebugDownload(
   pathname,
   res,
@@ -1304,6 +1522,33 @@ const server =
       if (
         req.method === 'GET' &&
         url.pathname ===
+          '/__runtime-probe'
+      ) {
+        sendJson(
+          res,
+          200,
+          {
+            ok: true,
+            runtimeVersion:
+              MASK_RUNTIME_VERSION,
+            railwayCommitSha:
+              process.env
+                .RAILWAY_GIT_COMMIT_SHA ||
+              null,
+            railwayDeploymentId:
+              process.env
+                .RAILWAY_DEPLOYMENT_ID ||
+              null,
+            features:
+              MASK_RUNTIME_FEATURES,
+          },
+        );
+        return;
+      }
+
+      if (
+        req.method === 'GET' &&
+        url.pathname ===
           '/__mask-debug/health'
       ) {
         sendJson(res, 200, {
@@ -1328,6 +1573,15 @@ const server =
       }
 
       if (req.method === 'GET') {
+        if (
+          await handleLatestDebugStatus(
+            url.pathname,
+            res,
+          )
+        ) {
+          return;
+        }
+
         if (
           await handleDebugSummary(
             url.pathname,
