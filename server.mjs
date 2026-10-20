@@ -325,6 +325,43 @@ function buildDiagnosticSummary(
       ) / 1000,
     );
 
+  const evaluationGapsMs = [];
+
+  for (
+    let i = 1;
+    i < evaluations.length;
+    i++
+  ) {
+    const gap =
+      Number(evaluations[i].perfMs) -
+      Number(evaluations[i - 1].perfMs);
+
+    if (
+      Number.isFinite(gap) &&
+      gap > 0
+    ) {
+      evaluationGapsMs.push(gap);
+    }
+  }
+
+  // Long pauses, tab suspension and face-loss intervals must not be counted as
+  // active verification time. The previous summary divided by wall-clock
+  // duration and could falsely report VERIFICATION_RATE_LOW.
+  const activeEvaluationGapsMs =
+    evaluationGapsMs.filter(
+      (gap) => gap <= 500,
+    );
+
+  const activeEvaluationSeconds =
+    Math.max(
+      0.001,
+      activeEvaluationGapsMs.reduce(
+        (sum, gap) =>
+          sum + gap,
+        0,
+      ) / 1000,
+    );
+
   let acceptedCount = 0;
   let staticCount = 0;
   let staticAcceptedCount = 0;
@@ -342,6 +379,8 @@ function buildDiagnosticSummary(
   const rigidSignals = [];
   const expressionSignals = [];
   const suppressedRigidSignals = [];
+  const holdDurationsMs = [];
+  const heldRigidSignals = [];
 
   for (
     const record of
@@ -435,6 +474,24 @@ function buildDiagnosticSummary(
       );
     }
 
+    if (!accepted) {
+      const holdMs =
+        Number(
+          gate.timeSinceLastAcceptMs ||
+          0,
+        );
+
+      if (holdMs > 0) {
+        holdDurationsMs.push(
+          holdMs,
+        );
+      }
+
+      heldRigidSignals.push(
+        rigidSignal,
+      );
+    }
+
     if (gate.staticLikely) {
       staticCount++;
 
@@ -493,6 +550,22 @@ function buildDiagnosticSummary(
   const actualEvaluationHz =
     evaluations.length /
     durationSeconds;
+
+  const activeEvaluationHz =
+    activeEvaluationGapsMs.length > 0
+      ? activeEvaluationGapsMs.length /
+        activeEvaluationSeconds
+      : actualEvaluationHz;
+
+  const maxHoldMs =
+    maxValue(
+      holdDurationsMs,
+    );
+
+  const maxHeldRigidSignalPx =
+    maxValue(
+      heldRigidSignals,
+    );
 
   const outputUpdateHz =
     acceptedCount /
@@ -563,7 +636,7 @@ function buildDiagnosticSummary(
       possibleEvaluationHz,
     ) &&
     possibleEvaluationHz > 0 &&
-    actualEvaluationHz <
+    activeEvaluationHz <
       possibleEvaluationHz * 0.75
   ) {
     diagnosis.push(
@@ -577,6 +650,15 @@ function buildDiagnosticSummary(
   ) {
     diagnosis.push(
       'OUTPUT_UPDATE_RATE_HIGH',
+    );
+  }
+
+  if (
+    maxHoldMs > 350 &&
+    maxHeldRigidSignalPx > 3
+  ) {
+    diagnosis.push(
+      'FOLLOW_LAG_HIGH',
     );
   }
 
@@ -600,9 +682,12 @@ function buildDiagnosticSummary(
       acceptedCount /
       evaluations.length,
     actualEvaluationHz,
+    activeEvaluationHz,
     requestedVerificationHz,
     trackerFpsMean,
     outputUpdateHz,
+    maxHoldMs,
+    maxHeldRigidSignalPx,
     reasons,
     static: {
       sampleCount: staticCount,

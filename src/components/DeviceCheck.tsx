@@ -404,8 +404,8 @@ export default function DeviceCheck({
                 <input
                   type="range"
                   min="0"
-                  max="30"
-                  step="0.5"
+                  max="5"
+                  step="0.25"
                   value={globalThresholdPx}
                   onChange={(e) => {
                     const value = Number(e.target.value);
@@ -627,6 +627,18 @@ export default function DeviceCheck({
                     value={
                       trackingStatus
                         ? `${trackingStatus.gateAccepted ? '적용' : '고정'} / ${trackingStatus.gateReason}`
+                        : '-'
+                    }
+                  />
+                </label>
+
+                <label>
+                  <span>마지막 적용 후</span>
+                  <input
+                    readOnly
+                    value={
+                      trackingStatus
+                        ? `${trackingStatus.timeSinceLastAcceptMs.toFixed(0)} ms`
                         : '-'
                     }
                   />

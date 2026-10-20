@@ -21,7 +21,10 @@ export const CORE_LANDMARK_INDICES = [
 export type GateDecisionReason =
   | 'first_frame'
   | 'rigid_motion'
+  | 'rigid_fast'
+  | 'catch_up'
   | 'expression'
+  | 'expression_catch_up'
   | 'hold'
   | 'not_due';
 
@@ -88,9 +91,9 @@ export interface GlobalLandmarkGateResult {
 }
 
 const MIN_THRESHOLD_PX = 1.0;
-const MAX_THRESHOLD_PX = 18;
+const MAX_THRESHOLD_PX = 5.0;
 const MIN_EXPRESSION_THRESHOLD_PX = 0.6;
-const MAX_EXPRESSION_THRESHOLD_PX = 8;
+const MAX_EXPRESSION_THRESHOLD_PX = 3.5;
 const MIN_VERIFICATION_HZ = 1;
 const MAX_VERIFICATION_HZ = 60;
 const HISTORY_SIZE = 90;
@@ -369,12 +372,12 @@ export class GlobalLandmarkGate {
       noiseFloorPx:
         quantile(
           this.rigidNoiseHistory,
-          0.85,
+          0.25,
         ),
       expressionNoiseFloorPx:
         quantile(
           this.expressionNoiseHistory,
-          0.85,
+          0.25,
         ),
       autoTuningEnabled:
         this.autoTuningEnabled,
@@ -494,40 +497,26 @@ export class GlobalLandmarkGate {
     frameRigidMotionPx: number,
     frameExpressionMotionPx: number,
   ) {
-    const rigidCeiling =
-      Math.max(
-        4,
-        this.thresholdPx * 0.9,
-      );
+    // Always keep the recent motion distribution. The old implementation
+    // admitted samples using a ceiling derived from the current threshold.
+    // Once the threshold increased, real head motion was learned as "noise",
+    // which raised the threshold again and created a positive feedback loop.
+    //
+    // We instead estimate the jitter floor from the LOW-MOTION quartile of
+    // this raw recent distribution. Deliberate movement lives in the upper
+    // part of the distribution and therefore cannot drive the noise floor
+    // upward indefinitely.
+    pushBounded(
+      this.rigidNoiseHistory,
+      frameRigidMotionPx,
+      HISTORY_SIZE,
+    );
 
-    const expressionCeiling =
-      Math.max(
-        2.5,
-        this.expressionThresholdPx *
-          1.75,
-      );
-
-    if (
-      frameRigidMotionPx <=
-      rigidCeiling
-    ) {
-      pushBounded(
-        this.rigidNoiseHistory,
-        frameRigidMotionPx,
-        HISTORY_SIZE,
-      );
-    }
-
-    if (
-      frameExpressionMotionPx <=
-      expressionCeiling
-    ) {
-      pushBounded(
-        this.expressionNoiseHistory,
-        frameExpressionMotionPx,
-        HISTORY_SIZE,
-      );
-    }
+    pushBounded(
+      this.expressionNoiseHistory,
+      frameExpressionMotionPx,
+      HISTORY_SIZE,
+    );
   }
 
   private tune(
@@ -537,13 +526,13 @@ export class GlobalLandmarkGate {
     const noiseFloorPx =
       quantile(
         this.rigidNoiseHistory,
-        0.85,
+        0.25,
       );
 
     const expressionNoiseFloorPx =
       quantile(
         this.expressionNoiseHistory,
-        0.85,
+        0.25,
       );
 
     const staticAcceptRate =
@@ -558,40 +547,39 @@ export class GlobalLandmarkGate {
 
     let targetThresholdPx =
       clamp(
-        noiseFloorPx * 3.2 + 0.5,
-        1.5,
-        14,
+        noiseFloorPx * 2.2 + 0.5,
+        1.8,
+        MAX_THRESHOLD_PX,
       );
 
     if (
       this.staticAcceptanceHistory
         .length >= 8 &&
-      staticAcceptRate > 0.03
+      staticAcceptRate > 0.08
     ) {
-      const penalty =
-        1 +
-        Math.min(
-          0.75,
-          (staticAcceptRate - 0.03) *
-            2,
-        );
-
+      // Small bounded correction only. Static false accepts must never be
+      // allowed to push the threshold into a range where the mask can visibly
+      // detach from the face.
       targetThresholdPx =
         clamp(
-          targetThresholdPx *
-            penalty,
-          1.5,
-          16,
+          targetThresholdPx +
+            Math.min(
+              0.8,
+              (staticAcceptRate - 0.08) *
+                2.0,
+            ),
+          1.8,
+          MAX_THRESHOLD_PX,
         );
     }
 
     const targetExpressionThresholdPx =
       clamp(
         expressionNoiseFloorPx *
-          2.4 +
+          1.6 +
           0.35,
-        0.8,
-        6,
+        0.9,
+        MAX_EXPRESSION_THRESHOLD_PX,
       );
 
     if (
@@ -605,14 +593,14 @@ export class GlobalLandmarkGate {
       const rigidAlpha =
         targetThresholdPx >
         this.thresholdPx
-          ? 0.28
-          : 0.06;
+          ? 0.20
+          : 0.10;
 
       const expressionAlpha =
         targetExpressionThresholdPx >
         this.expressionThresholdPx
-          ? 0.22
-          : 0.05;
+          ? 0.18
+          : 0.10;
 
       this.thresholdPx =
         clamp(
@@ -864,27 +852,27 @@ export class GlobalLandmarkGate {
     const noiseFloorBefore =
       quantile(
         this.rigidNoiseHistory,
-        0.85,
+        0.25,
       );
 
     const expressionNoiseFloorBefore =
       quantile(
         this.expressionNoiseHistory,
-        0.85,
+        0.25,
       );
 
     const staticLikely =
       frameRigidMotionPx <=
         Math.max(
-          2,
+          2.2,
           noiseFloorBefore *
-            2.5,
+            2.0,
         ) &&
       frameExpressionMotionPx <=
         Math.max(
-          1.2,
+          1.5,
           expressionNoiseFloorBefore *
-            2.5,
+            2.0,
         );
 
     let accepted = false;
@@ -892,7 +880,40 @@ export class GlobalLandmarkGate {
       GateDecisionReason =
         'hold';
 
+    const timeSinceLastAcceptBeforeMs =
+      this.lastAcceptMs >= 0
+        ? timestampMs -
+          this.lastAcceptMs
+        : 0;
+
+    const fastMotionThresholdPx =
+      Math.max(
+        3.5,
+        noiseFloorBefore * 3.0,
+      );
+
+    const catchUpSignalPx =
+      Math.max(
+        2.5,
+        noiseFloorBefore * 2.0,
+      );
+
+    const expressionCatchUpPx =
+      Math.max(
+        1.8,
+        expressionNoiseFloorBefore *
+          1.8,
+      );
+
     if (
+      frameRigidMotionPx >=
+      fastMotionThresholdPx
+    ) {
+      // A real sudden head movement must bypass the stabilizer immediately.
+      accepted = true;
+      decisionReason =
+        'rigid_fast';
+    } else if (
       rigidSignalPx >=
       thresholdBeforePx
     ) {
@@ -906,6 +927,26 @@ export class GlobalLandmarkGate {
       accepted = true;
       decisionReason =
         'expression';
+    } else if (
+      timeSinceLastAcceptBeforeMs >=
+        150 &&
+      rigidSignalPx >=
+        catchUpSignalPx
+    ) {
+      // Hard anti-lag guard: even slow deliberate motion cannot leave the mask
+      // sitting on an old pose for hundreds or thousands of milliseconds.
+      accepted = true;
+      decisionReason =
+        'catch_up';
+    } else if (
+      timeSinceLastAcceptBeforeMs >=
+        150 &&
+      expressionSignalPx >=
+        expressionCatchUpPx
+    ) {
+      accepted = true;
+      decisionReason =
+        'expression_catch_up';
     }
 
     if (staticLikely) {
