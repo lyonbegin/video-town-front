@@ -2,6 +2,7 @@
 import {
   createMaskedCameraStream,
   DEFAULT_DEADBAND_THRESHOLD,
+  DEFAULT_VELOCITY_THRESHOLD,
   type CameraMode,
   type MaskedCameraController,
   type TrackingStatus,
@@ -36,6 +37,8 @@ export default function DeviceCheck({
     useState<TrackingStatus | null>(null);
   const [deadbandThreshold, setDeadbandThreshold] =
     useState(DEFAULT_DEADBAND_THRESHOLD);
+  const [velocityThreshold, setVelocityThreshold] =
+    useState(DEFAULT_VELOCITY_THRESHOLD);
 
   useEffect(() => {
     if (previewRef.current) {
@@ -168,6 +171,9 @@ export default function DeviceCheck({
           maskControllerRef.current = controller;
           controller.setDeadbandThreshold(
             deadbandThreshold,
+          );
+          controller.setVelocityThreshold(
+            velocityThreshold,
           );
           outgoing = controller.stream;
           setTrackingStatus(controller.getTrackingStatus());
@@ -346,19 +352,18 @@ export default function DeviceCheck({
               </div>
 
               <p className="muted-text">
-                Relative Velocity smoothing 뒤에 단순 absolute deadband를 적용합니다.
-                각 landmark의 현재 화면상 X/Y 위치와 마지막으로 실제 반영된 위치의
-                절대값 차이를 픽셀 단위로 비교합니다. X/Y가 threshold 안이면 X/Y/Z
-                전체를 이전 값으로 고정하고, 범위를 넘으면 현재 좌표를 즉시 반영합니다.
+                Relative Velocity smoothing 뒤에 위치 deadband와 순간속도 bypass를 적용합니다.
+                위치 변화가 작으면 이전 좌표를 고정하지만, 프레임 간 순간 이동속도가
+                velocity threshold를 넘으면 위치 threshold와 관계없이 현재 좌표를 즉시 반영합니다.
               </p>
 
               <div className="preview-badge">
-                Relative Velocity · window 5 · velocity scale 20 · simple absolute deadband
+                Relative Velocity · position deadband · instantaneous velocity bypass
               </div>
 
               <label>
                 <span>
-                  Deadband threshold · {deadbandThreshold.toFixed(2)} px
+                  위치 threshold · {deadbandThreshold.toFixed(2)} px
                 </span>
                 <input
                   type="range"
@@ -380,10 +385,34 @@ export default function DeviceCheck({
                 />
               </label>
 
+              <label>
+                <span>
+                  순간속도 threshold · {velocityThreshold.toFixed(0)} px/s
+                </span>
+                <input
+                  type="range"
+                  min="0"
+                  max="600"
+                  step="10"
+                  value={velocityThreshold}
+                  onChange={(e) => {
+                    const value = Number(e.target.value);
+                    setVelocityThreshold(value);
+                    maskControllerRef.current
+                      ?.setVelocityThreshold(value);
+                    setTrackingStatus(
+                      maskControllerRef.current
+                        ?.getTrackingStatus() ?? null,
+                    );
+                  }}
+                  disabled={busy || ready}
+                />
+              </label>
+
               <p className="muted-text">
-                0 px이면 deadband를 끕니다. 1~3 px부터 차이를 확인하고,
-                값을 올릴수록 미세한 메쉬 흔들림을 더 강하게 고정합니다.
-                너무 높이면 작은 표정 변화가 계단식으로 반영됩니다.
+                위치 threshold를 올리면 정지 시 미세 흔들림은 더 강하게 고정됩니다.
+                순간속도 threshold보다 빠른 움직임은 위치 threshold를 무시하고 즉시 따라갑니다.
+                순간속도 threshold를 낮출수록 빠른 움직임을 더 쉽게 bypass합니다.
               </p>
 
               <div className="device-grid">
@@ -424,13 +453,37 @@ export default function DeviceCheck({
                 </label>
 
                 <label>
-                  <span>현재 threshold</span>
+                  <span>현재 위치 threshold</span>
                   <input
                     readOnly
                     value={
                       trackingStatus
                         ? `${trackingStatus.deadbandThreshold.toFixed(2)} px`
                         : `${deadbandThreshold.toFixed(2)} px`
+                    }
+                  />
+                </label>
+
+                <label>
+                  <span>현재 순간속도 threshold</span>
+                  <input
+                    readOnly
+                    value={
+                      trackingStatus
+                        ? `${trackingStatus.velocityThreshold.toFixed(0)} px/s`
+                        : `${velocityThreshold.toFixed(0)} px/s`
+                    }
+                  />
+                </label>
+
+                <label>
+                  <span>속도 bypass 비율(%)</span>
+                  <input
+                    readOnly
+                    value={
+                      trackingStatus
+                        ? (trackingStatus.velocityBypassRatio * 100).toFixed(1)
+                        : '-'
                     }
                   />
                 </label>
