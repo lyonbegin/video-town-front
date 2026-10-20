@@ -57,6 +57,7 @@ type MindARController = {
     hasFace: boolean;
     estimateResult?: MindAREstimate;
   }) => void;
+  processVideo: (input: HTMLVideoElement) => void;
   stopProcessVideo: () => void;
 };
 
@@ -146,20 +147,37 @@ class RelativeVelocityFilter {
   private lastValue = 0;
   private lastValueScale = 1;
   private lastTimestampMs = -1;
-  private readonly window: WindowElement[] = [];
+  private readonly window: WindowElement[];
   private lowPassInitialized = false;
   private lowPassValue = 0;
 
   constructor(
     private readonly maxWindowSize: number,
     private readonly velocityScale: number,
-  ) {}
+  ) {
+    // MediaPipe's C++ RelativeVelocityFilter initializes its deque with
+    // window_size zero-valued elements. Preserve that startup behavior too.
+    this.window = Array.from(
+      { length: maxWindowSize },
+      () => ({
+        distance: 0,
+        durationMs: 0,
+      }),
+    );
+  }
 
   reset() {
     this.lastValue = 0;
     this.lastValueScale = 1;
     this.lastTimestampMs = -1;
     this.window.length = 0;
+
+    for (let i = 0; i < this.maxWindowSize; i++) {
+      this.window.push({
+        distance: 0,
+        durationMs: 0,
+      });
+    }
     this.lowPassInitialized = false;
     this.lowPassValue = 0;
   }
@@ -471,6 +489,11 @@ export async function createMaskedCameraStream(
 
     mindarThree = mindar;
 
+    // Prevent MindAR from starting its original post-estimator smoothing loop.
+    // _startAR still performs detector setup, dummy warmup, camera geometry and
+    // onUpdate wiring; only processVideo() is replaced.
+    mindar.controller.processVideo = () => {};
+
     const { renderer, scene, camera } = mindar;
 
     const light = new THREE.HemisphereLight(
@@ -510,20 +533,9 @@ export async function createMaskedCameraStream(
 
     const controller = mindar.controller;
 
-    // Stop MindAR's built-in:
-    // detect -> estimate(raw) -> OneEuro(metric/matrix) -> geometry(raw)
-    //
-    // We replace only that loop with:
+    // MindAR's built-in loop never started. Our only tracking path is:
     // detect -> RelativeVelocity(raw landmarks) -> estimate(smoothed)
     //        -> matrix + geometry from the SAME smoothed landmarks.
-    controller.stopProcessVideo();
-
-    // Let any already-running detector promise finish before our loop starts.
-    await new Promise<void>((resolve) =>
-      requestAnimationFrame(() =>
-        requestAnimationFrame(() => resolve()),
-      ),
-    );
 
     const smoother =
       new FaceLandmarksSmoother();
@@ -631,9 +643,13 @@ export async function createMaskedCameraStream(
 
           if (
             everSeenFace &&
-            now - lastSeenAt >
+            now - lastSeenAt <=
               FACE_LOSS_GRACE_MS
           ) {
+            // MindAR's onUpdate hides the mesh immediately. Keep the last
+            // rendered mesh briefly through short detector misses.
+            faceMesh.visible = true;
+          } else if (everSeenFace) {
             faceMesh.visible = false;
           }
         } else {
