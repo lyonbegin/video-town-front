@@ -347,9 +347,9 @@ export default function DeviceCheck({
 
               <p className="muted-text">
                 Relative Velocity smoothing 뒤에 단순 absolute deadband를 적용합니다.
-                각 landmark의 현재 x/y/z 값과 마지막으로 실제 반영된 값을 비교해서,
-                차이가 threshold 이하이면 좌표를 전혀 바꾸지 않고 threshold를 넘으면
-                현재 좌표를 즉시 반영합니다.
+                각 landmark의 현재 화면상 X/Y 위치와 마지막으로 실제 반영된 위치의
+                절대값 차이를 픽셀 단위로 비교합니다. X/Y가 threshold 안이면 X/Y/Z
+                전체를 이전 값으로 고정하고, 범위를 넘으면 현재 좌표를 즉시 반영합니다.
               </p>
 
               <div className="preview-badge">
@@ -358,13 +358,13 @@ export default function DeviceCheck({
 
               <label>
                 <span>
-                  Deadband threshold · {deadbandThreshold.toFixed(4)}
+                  Deadband threshold · {deadbandThreshold.toFixed(2)} px
                 </span>
                 <input
                   type="range"
                   min="0"
-                  max="0.01"
-                  step="0.0001"
+                  max="15"
+                  step="0.25"
                   value={deadbandThreshold}
                   onChange={(e) => {
                     const value = Number(e.target.value);
@@ -381,8 +381,9 @@ export default function DeviceCheck({
               </label>
 
               <p className="muted-text">
-                0이면 deadband를 끕니다. 값을 올릴수록 미세한 메쉬 흔들림을
-                더 강하게 고정하고, 너무 높이면 작은 표정 변화가 늦게 반영됩니다.
+                0 px이면 deadband를 끕니다. 1~3 px부터 차이를 확인하고,
+                값을 올릴수록 미세한 메쉬 흔들림을 더 강하게 고정합니다.
+                너무 높이면 작은 표정 변화가 계단식으로 반영됩니다.
               </p>
 
               <div className="device-grid">
@@ -428,8 +429,8 @@ export default function DeviceCheck({
                     readOnly
                     value={
                       trackingStatus
-                        ? trackingStatus.deadbandThreshold.toFixed(4)
-                        : deadbandThreshold.toFixed(4)
+                        ? `${trackingStatus.deadbandThreshold.toFixed(2)} px`
+                        : `${deadbandThreshold.toFixed(2)} px`
                     }
                   />
                 </label>
