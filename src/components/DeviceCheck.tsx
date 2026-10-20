@@ -3,6 +3,8 @@ import {
   createMaskedCameraStream,
   DEFAULT_GLOBAL_THRESHOLD_PX,
   DEFAULT_GATE_VERIFICATION_HZ,
+  DEFAULT_ONE_EURO_BETA,
+  DEFAULT_ONE_EURO_MIN_CUTOFF,
   DEFAULT_POINT_DEADBAND_3D_PX,
   type CameraMode,
   type MaskedCameraController,
@@ -42,6 +44,10 @@ export default function DeviceCheck({
     useState(DEFAULT_GATE_VERIFICATION_HZ);
   const [pointDeadbandPx, setPointDeadbandPx] =
     useState(DEFAULT_POINT_DEADBAND_3D_PX);
+  const [oneEuroMinCutOff, setOneEuroMinCutOff] =
+    useState(DEFAULT_ONE_EURO_MIN_CUTOFF);
+  const [oneEuroBeta, setOneEuroBeta] =
+    useState(DEFAULT_ONE_EURO_BETA);
   const [autoTuningEnabled, setAutoTuningEnabled] =
     useState(true);
   const [debugSession, setDebugSession] =
@@ -114,7 +120,16 @@ export default function DeviceCheck({
         return;
       }
 
-      setTrackingStatus(controller.getTrackingStatus());
+      const status =
+        controller.getTrackingStatus();
+
+      setTrackingStatus(status);
+      setOneEuroMinCutOff(
+        status.oneEuroMinCutOff,
+      );
+      setOneEuroBeta(
+        status.oneEuroBeta,
+      );
     };
 
     update();
@@ -200,7 +215,16 @@ export default function DeviceCheck({
             autoTuningEnabled,
           );
           outgoing = controller.stream;
-          setTrackingStatus(controller.getTrackingStatus());
+          const status =
+            controller.getTrackingStatus();
+
+          setTrackingStatus(status);
+          setOneEuroMinCutOff(
+            status.oneEuroMinCutOff,
+          );
+          setOneEuroBeta(
+            status.oneEuroBeta,
+          );
           setDebugSession(controller.getDebugSession());
         } catch (maskError) {
           raw.getTracks().forEach((track) => track.stop());
@@ -414,6 +438,60 @@ export default function DeviceCheck({
               <p className="muted-text">
                 estimator가 계산한 실제 3D metric landmark에 직접 적용됩니다.
                 0px이면 개별 점 deadband를 끄고, 10px까지 실시간 변경 즉시 geometry에 반영됩니다.
+              </p>
+
+              <label>
+                <span>
+                  OneEuro minCutOff · {oneEuroMinCutOff.toFixed(5)}
+                </span>
+                <input
+                  type="range"
+                  min="0.00005"
+                  max="0.005"
+                  step="0.00005"
+                  value={oneEuroMinCutOff}
+                  onChange={(e) => {
+                    const value = Number(e.target.value);
+                    setOneEuroMinCutOff(value);
+                    maskControllerRef.current
+                      ?.setOneEuroMinCutOff(value);
+                    setTrackingStatus(
+                      maskControllerRef.current
+                        ?.getTrackingStatus() ?? null,
+                    );
+                  }}
+                  disabled={busy}
+                />
+              </label>
+
+              <label>
+                <span>
+                  OneEuro beta · {oneEuroBeta.toFixed(2)}
+                </span>
+                <input
+                  type="range"
+                  min="0"
+                  max="20"
+                  step="0.25"
+                  value={oneEuroBeta}
+                  onChange={(e) => {
+                    const value = Number(e.target.value);
+                    setOneEuroBeta(value);
+                    maskControllerRef.current
+                      ?.setOneEuroBeta(value);
+                    setTrackingStatus(
+                      maskControllerRef.current
+                        ?.getTrackingStatus() ?? null,
+                    );
+                  }}
+                  disabled={busy}
+                />
+              </label>
+
+              <p className="muted-text">
+                두 슬라이더는 기존 MindAR faceMatrixFilter/faceScaleFilter의
+                minCutOff와 beta만 직접 바꿉니다. 슬라이더를 움직인 세션에서는
+                자동 탐색은 계속 기록하되 live 필터 값은 수동값을 유지합니다.
               </p>
 
               <label>
