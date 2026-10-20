@@ -12,7 +12,7 @@ export interface TrackingStatus {
   deadbandHoldRatio: number;
 }
 
-export const DEFAULT_DEADBAND_THRESHOLD = 0.0015;
+export const DEFAULT_DEADBAND_THRESHOLD = 2.0;
 
 export interface MaskedCameraController {
   stream: MediaStream;
@@ -651,18 +651,18 @@ export async function createMaskedCameraStream(
             hasFace: false,
           });
 
-          smoother.reset();
-          deadband.reset();
-
           if (
             everSeenFace &&
             now - lastSeenAt <=
               FACE_LOSS_GRACE_MS
           ) {
-            // MindAR's onUpdate hides the mesh immediately. Keep the last
-            // rendered mesh briefly through short detector misses.
+            // Preserve smoothing/deadband state through short detector misses.
+            // Resetting it here made every reacquired frame jump to a fresh
+            // baseline and masked the effect of the threshold slider.
             faceMesh.visible = true;
           } else if (everSeenFace) {
+            smoother.reset();
+            deadband.reset();
             faceMesh.visible = false;
           }
         } else {
@@ -677,6 +677,8 @@ export async function createMaskedCameraStream(
           const stabilizedLandmarks =
             deadband.apply(
               smoothedLandmarks,
+              video.videoWidth,
+              video.videoHeight,
             );
 
           const estimateResult =
