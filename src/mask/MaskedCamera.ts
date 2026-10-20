@@ -1,4 +1,4 @@
-import { AbsoluteLandmarkDeadband } from './AbsoluteDeadband';
+import { GlobalLandmarkGate } from './GlobalLandmarkGate';
 
 export type CameraMode = 'mask' | 'original';
 
@@ -8,20 +8,21 @@ export interface TrackingStatus {
   smoothing: 'mediapipe-relative-velocity';
   windowSize: number;
   velocityScale: number;
-  deadbandThreshold: number;
-  velocityThreshold: number;
-  deadbandHoldRatio: number;
-  velocityBypassRatio: number;
+  globalThresholdPx: number;
+  verificationHz: number;
+  movedCorePoints: number;
+  requiredMovedCorePoints: number;
+  gateAccepted: boolean;
 }
 
-export const DEFAULT_DEADBAND_THRESHOLD = 2.0;
-export const DEFAULT_VELOCITY_THRESHOLD = 80;
+export const DEFAULT_GLOBAL_THRESHOLD_PX = 3.0;
+export const DEFAULT_GATE_VERIFICATION_HZ = 15;
 
 export interface MaskedCameraController {
   stream: MediaStream;
   stop: () => void;
-  setDeadbandThreshold: (threshold: number) => void;
-  setVelocityThreshold: (threshold: number) => void;
+  setGlobalThresholdPx: (threshold: number) => void;
+  setVerificationHz: (hz: number) => void;
   getTrackingStatus: () => TrackingStatus;
 }
 
@@ -545,16 +546,17 @@ export async function createMaskedCameraStream(
     const controller = mindar.controller;
 
     // MindAR's built-in loop never started. Our only tracking path is:
-    // detect -> RelativeVelocity(raw landmarks) -> simple absolute deadband
-    //        -> estimate -> matrix + geometry from the SAME landmarks.
+    // detect -> RelativeVelocity(raw landmarks) -> global core-point gate.
+    // The gate decides whether the entire landmark frame is accepted.
+    // If rejected, estimator/pose/geometry are not updated at all.
 
     const smoother =
       new FaceLandmarksSmoother();
 
-    const deadband =
-      new AbsoluteLandmarkDeadband(
-        DEFAULT_DEADBAND_THRESHOLD,
-        DEFAULT_VELOCITY_THRESHOLD,
+    const globalGate =
+      new GlobalLandmarkGate(
+        DEFAULT_GLOBAL_THRESHOLD_PX,
+        DEFAULT_GATE_VERIFICATION_HZ,
       );
 
     const flipped =
@@ -667,7 +669,7 @@ export async function createMaskedCameraStream(
             faceMesh.visible = true;
           } else if (everSeenFace) {
             smoother.reset();
-            deadband.reset();
+            globalGate.reset();
             faceMesh.visible = false;
           }
         } else {
@@ -679,41 +681,39 @@ export async function createMaskedCameraStream(
               video.videoHeight,
             );
 
-          const stabilizedLandmarks =
-            deadband.apply(
+          const gateResult =
+            globalGate.evaluate(
               smoothedLandmarks,
               video.videoWidth,
               video.videoHeight,
               now,
             );
 
-          const estimateResult =
-            controller.estimator.estimate(
-              stabilizedLandmarks,
-            );
+          if (gateResult.accepted) {
+            const estimateResult =
+              controller.estimator.estimate(
+                gateResult.points,
+              );
 
-          estimateResult.blendshapes =
-            results.faceBlendshapes?.[0];
+            estimateResult.blendshapes =
+              results.faceBlendshapes?.[0];
 
-          controller.lastEstimateResult =
-            estimateResult;
+            controller.lastEstimateResult =
+              estimateResult;
 
-          // MindARThree's original onUpdate applies the same estimateResult
-          // to faceMesh.matrix and latestEstimate.
-          controller.onUpdate({
-            hasFace: true,
-            estimateResult,
-          });
+            controller.onUpdate({
+              hasFace: true,
+              estimateResult,
+            });
 
-          // Crucially, geometry now receives the same smoothed estimate that
-          // generated faceMatrix. No raw-landmark geometry branch remains.
-          for (
-            const geometry of
-            controller.customFaceGeometries
-          ) {
-            geometry.updatePositions(
-              estimateResult.metricLandmarks,
-            );
+            for (
+              const geometry of
+              controller.customFaceGeometries
+            ) {
+              geometry.updatePositions(
+                estimateResult.metricLandmarks,
+              );
+            }
           }
 
           lastSeenAt = now;
@@ -837,27 +837,31 @@ export async function createMaskedCameraStream(
           VELOCITY_FILTER_WINDOW_SIZE,
         velocityScale:
           VELOCITY_FILTER_SCALE,
-        deadbandThreshold:
-          deadband.getStatus().threshold,
-        velocityThreshold:
-          deadband.getStatus().velocityThreshold,
-        deadbandHoldRatio:
-          deadband.getStatus().holdRatio,
-        velocityBypassRatio:
-          deadband.getStatus().velocityBypassRatio,
+        globalThresholdPx:
+          globalGate.getStatus().thresholdPx,
+        verificationHz:
+          globalGate.getStatus().verificationHz,
+        movedCorePoints:
+          globalGate.getStatus().movedCorePoints,
+        requiredMovedCorePoints:
+          globalGate.getStatus().requiredMovedCorePoints,
+        gateAccepted:
+          globalGate.getStatus().accepted,
       });
 
-    const setDeadbandThreshold = (
+    const setGlobalThresholdPx = (
       threshold: number,
     ) => {
-      deadband.setThreshold(threshold);
+      globalGate.setThresholdPx(
+        threshold,
+      );
     };
 
-    const setVelocityThreshold = (
-      threshold: number,
+    const setVerificationHz = (
+      hz: number,
     ) => {
-      deadband.setVelocityThreshold(
-        threshold,
+      globalGate.setVerificationHz(
+        hz,
       );
     };
 
@@ -917,8 +921,8 @@ export async function createMaskedCameraStream(
     return {
       stream: outputStream,
       stop,
-      setDeadbandThreshold,
-      setVelocityThreshold,
+      setGlobalThresholdPx,
+      setVerificationHz,
       getTrackingStatus,
     };
   } catch (error) {
