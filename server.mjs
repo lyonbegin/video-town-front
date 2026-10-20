@@ -27,11 +27,13 @@ const PORT =
   Number(process.env.PORT) || 4173;
 
 const MASK_RUNTIME_VERSION =
-  'mask-runtime-20261020-v6';
+  'mask-runtime-20261020-v7';
 
 const MASK_RUNTIME_FEATURES = {
   metricLandmarkDeadband: true,
   liveDeadbandSlider: true,
+  liveOneEuroSliders: true,
+  oneEuroConfigChangeLogging: true,
   pointDeadbandEffectLogging: true,
   loggingContinuesAfterConvergence: true,
   runtimeProbeEndpoint: true,
@@ -236,9 +238,19 @@ async function handleDebugPost(
             'point_deadband_effect',
         );
 
+    const oneEuroConfigChangeRecord =
+      [...records]
+        .reverse()
+        .find(
+          (record) =>
+            record?.type ===
+            'one_euro_config_change',
+        );
+
     if (
       runtimeProbeRecord ||
       configChangeRecord ||
+      oneEuroConfigChangeRecord ||
       effectRecord
     ) {
       console.log(
@@ -250,6 +262,9 @@ async function handleDebugPost(
             null,
           configChange:
             configChangeRecord?.data ??
+            null,
+          oneEuroConfigChange:
+            oneEuroConfigChangeRecord?.data ??
             null,
           effect:
             effectRecord
@@ -1412,6 +1427,13 @@ async function handleLatestDebugStatus(
         'point_deadband_config_change',
     );
 
+  const oneEuroConfigChanges =
+    records.filter(
+      (record) =>
+        record?.type ===
+        'one_euro_config_change',
+    );
+
   const clientRuntimeVersion =
     sessionStart?.data
       ?.runtimeVersion ??
@@ -1456,6 +1478,14 @@ async function handleLatestDebugStatus(
           deadbandEffects.length,
         pointDeadbandConfigChangeCount:
           deadbandConfigChanges.length,
+        oneEuroConfigChangeCount:
+          oneEuroConfigChanges.length,
+        lastOneEuroConfigChange:
+          oneEuroConfigChanges.length > 0
+            ? oneEuroConfigChanges[
+                oneEuroConfigChanges.length - 1
+              ]?.data ?? null
+            : null,
         lastPointDeadbandEffect:
           deadbandEffects.length > 0
             ? deadbandEffects[
@@ -1473,6 +1503,8 @@ async function handleLatestDebugStatus(
           deadbandEffects.length > 0,
         sliderChangeLoggingActive:
           deadbandConfigChanges.length > 0,
+        oneEuroSliderChangeLoggingActive:
+          oneEuroConfigChanges.length > 0,
       },
     },
   );
