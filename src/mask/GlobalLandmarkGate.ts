@@ -171,33 +171,37 @@ export class GlobalLandmarkGate {
       this.lastEvaluationMs =
         timestampMs;
 
-      const coreMeasurements =
-        CORE_LANDMARK_INDICES
-          .map((index) => {
-            const point =
-              this.acceptedPoints[index];
+      const coreMeasurements:
+        CoreLandmarkMeasurement[] = [];
 
-            if (!point) return null;
+      for (
+        let i = 0;
+        i < CORE_LANDMARK_INDICES.length;
+        i++
+      ) {
+        const index =
+          CORE_LANDMARK_INDICES[i];
 
-            const point3 =
-              toPoint3(point);
+        const point =
+          this.acceptedPoints[index];
 
-            return {
-              index,
-              current: point3,
-              acceptedBaseline: point3,
-              dxPx: 0,
-              dyPx: 0,
-              distancePx: 0,
-              overThreshold: true,
-            };
-          })
-          .filter(
-            (
-              item,
-            ): item is CoreLandmarkMeasurement =>
-              item !== null,
-          );
+        if (!point) {
+          continue;
+        }
+
+        const point3 =
+          toPoint3(point);
+
+        coreMeasurements.push({
+          index,
+          current: point3,
+          acceptedBaseline: point3,
+          dxPx: 0,
+          dyPx: 0,
+          distancePx: 0,
+          overThreshold: true,
+        });
+      }
 
       this.status = {
         thresholdPx: this.thresholdPx,
