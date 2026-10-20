@@ -9,15 +9,19 @@ export interface TrackingStatus {
   windowSize: number;
   velocityScale: number;
   deadbandThreshold: number;
+  velocityThreshold: number;
   deadbandHoldRatio: number;
+  velocityBypassRatio: number;
 }
 
 export const DEFAULT_DEADBAND_THRESHOLD = 2.0;
+export const DEFAULT_VELOCITY_THRESHOLD = 80;
 
 export interface MaskedCameraController {
   stream: MediaStream;
   stop: () => void;
   setDeadbandThreshold: (threshold: number) => void;
+  setVelocityThreshold: (threshold: number) => void;
   getTrackingStatus: () => TrackingStatus;
 }
 
@@ -550,6 +554,7 @@ export async function createMaskedCameraStream(
     const deadband =
       new AbsoluteLandmarkDeadband(
         DEFAULT_DEADBAND_THRESHOLD,
+        DEFAULT_VELOCITY_THRESHOLD,
       );
 
     const flipped =
@@ -672,6 +677,7 @@ export async function createMaskedCameraStream(
               now,
               video.videoWidth,
               video.videoHeight,
+              now,
             );
 
           const stabilizedLandmarks =
@@ -833,14 +839,26 @@ export async function createMaskedCameraStream(
           VELOCITY_FILTER_SCALE,
         deadbandThreshold:
           deadband.getStatus().threshold,
+        velocityThreshold:
+          deadband.getStatus().velocityThreshold,
         deadbandHoldRatio:
           deadband.getStatus().holdRatio,
+        velocityBypassRatio:
+          deadband.getStatus().velocityBypassRatio,
       });
 
     const setDeadbandThreshold = (
       threshold: number,
     ) => {
       deadband.setThreshold(threshold);
+    };
+
+    const setVelocityThreshold = (
+      threshold: number,
+    ) => {
+      deadband.setVelocityThreshold(
+        threshold,
+      );
     };
 
     const stop = () => {
@@ -900,6 +918,7 @@ export async function createMaskedCameraStream(
       stream: outputStream,
       stop,
       setDeadbandThreshold,
+      setVelocityThreshold,
       getTrackingStatus,
     };
   } catch (error) {
