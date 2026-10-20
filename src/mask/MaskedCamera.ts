@@ -39,6 +39,8 @@ export interface TrackingStatus {
   oneEuroConverged: boolean;
   oneEuroConvergenceProgress: number;
   oneEuroScore: number;
+  pointDeadbandPx: number;
+  pointDeadbandHeldCount: number;
   calibrationSeedSource: 'saved' | 'default';
   staticAcceptRate: number;
   outputUpdateRate: number;
@@ -54,6 +56,11 @@ export const DEFAULT_GATE_VERIFICATION_HZ = 15;
 // it only searches minCutOff/beta.
 const DEFAULT_ONE_EURO_MIN_CUTOFF = 0.0004;
 const DEFAULT_ONE_EURO_BETA = 4.0;
+
+// Fixed per-landmark 3D deadband for mesh deformation.
+// Pixel-equivalent distance:
+// sqrt((dx*width)^2 + (dy*height)^2 + (dz*width)^2)
+const POINT_DEADBAND_3D_PX = 2.0;
 
 export interface MaskedCameraController {
   stream: MediaStream;
@@ -1096,6 +1103,122 @@ class RelativeVelocityFilter {
   }
 }
 
+
+class Absolute3DPointDeadband {
+  private heldPoints: number[][] = [];
+  private heldCount = 0;
+
+  constructor(
+    private readonly thresholdPx: number,
+  ) {}
+
+  reset() {
+    this.heldPoints = [];
+    this.heldCount = 0;
+  }
+
+  apply(
+    points: number[][],
+    imageWidth: number,
+    imageHeight: number,
+  ) {
+    if (
+      this.heldPoints.length !==
+      points.length
+    ) {
+      this.heldPoints =
+        points.map((point) => [
+          point[0] ?? 0,
+          point[1] ?? 0,
+          point[2] ?? 0,
+        ]);
+
+      this.heldCount = 0;
+
+      return this.heldPoints.map(
+        (point) => [...point],
+      );
+    }
+
+    const width =
+      Math.max(1, imageWidth);
+
+    const height =
+      Math.max(1, imageHeight);
+
+    let heldCount = 0;
+
+    for (
+      let i = 0;
+      i < points.length;
+      i++
+    ) {
+      const current =
+        points[i];
+
+      const previous =
+        this.heldPoints[i];
+
+      const dx =
+        ((current[0] ?? 0) -
+          (previous[0] ?? 0)) *
+        width;
+
+      const dy =
+        ((current[1] ?? 0) -
+          (previous[1] ?? 0)) *
+        height;
+
+      // MediaPipe normalized z uses approximately the same scale as x,
+      // so width is used to convert z to pixel-equivalent units.
+      const dz =
+        ((current[2] ?? 0) -
+          (previous[2] ?? 0)) *
+        width;
+
+      const distancePx =
+        Math.hypot(
+          dx,
+          dy,
+          dz,
+        );
+
+      if (
+        distancePx <
+        this.thresholdPx
+      ) {
+        heldCount++;
+        continue;
+      }
+
+      previous[0] =
+        current[0] ?? 0;
+
+      previous[1] =
+        current[1] ?? 0;
+
+      previous[2] =
+        current[2] ?? 0;
+    }
+
+    this.heldCount =
+      heldCount;
+
+    return this.heldPoints.map(
+      (point) => [...point],
+    );
+  }
+
+  getHeldCount() {
+    return this.heldCount;
+  }
+
+  getThresholdPx() {
+    return this.thresholdPx;
+  }
+}
+
+
 class FaceLandmarksSmoother {
   private xFilters: RelativeVelocityFilter[] = [];
   private yFilters: RelativeVelocityFilter[] = [];
@@ -1512,6 +1635,11 @@ export async function createMaskedCameraStream(
     const smoother =
       new FaceLandmarksSmoother();
 
+    const pointDeadband =
+      new Absolute3DPointDeadband(
+        POINT_DEADBAND_3D_PX,
+      );
+
     const globalGate =
       new GlobalLandmarkGate(
         initialThresholdPx,
@@ -1658,6 +1786,7 @@ export async function createMaskedCameraStream(
             faceMesh.visible = true;
           } else if (everSeenFace) {
             smoother.reset();
+            pointDeadband.reset();
             globalGate.reset();
             controller.faceMatrixFilter.reset();
             controller.faceScaleFilter.reset();
@@ -1674,6 +1803,13 @@ export async function createMaskedCameraStream(
             smoother.smooth(
               results.faceLandmarks[0],
               now,
+              video.videoWidth,
+              video.videoHeight,
+            );
+
+          const deadbandedLandmarks =
+            pointDeadband.apply(
+              smoothedLandmarks,
               video.videoWidth,
               video.videoHeight,
             );
@@ -1757,7 +1893,7 @@ export async function createMaskedCameraStream(
           // deformation frame cannot hold the whole mask at an old position.
           const gateResult =
             globalGate.evaluate(
-              smoothedLandmarks,
+              deadbandedLandmarks,
               video.videoWidth,
               video.videoHeight,
               now,
@@ -1848,6 +1984,18 @@ export async function createMaskedCameraStream(
                   flattenNumericLandmarks(
                     smoothedLandmarks,
                   ),
+                deadbandedNormalized:
+                  flattenNumericLandmarks(
+                    deadbandedLandmarks,
+                  ),
+                pointDeadband: {
+                  thresholdPx:
+                    pointDeadband.getThresholdPx(),
+                  heldCount:
+                    pointDeadband.getHeldCount(),
+                  totalPoints:
+                    deadbandedLandmarks.length,
+                },
                 gate: {
                   ...globalGate.getStatus(),
                   firstFrame:
@@ -2154,6 +2302,10 @@ export async function createMaskedCameraStream(
           oneEuroTuner.getStatus().progress,
         oneEuroScore:
           oneEuroTuner.getStatus().score,
+        pointDeadbandPx:
+          pointDeadband.getThresholdPx(),
+        pointDeadbandHeldCount:
+          pointDeadband.getHeldCount(),
         calibrationSeedSource,
         staticAcceptRate:
           globalGate.getStatus().staticAcceptRate,

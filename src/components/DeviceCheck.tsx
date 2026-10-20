@@ -377,7 +377,7 @@ export default function DeviceCheck({
               </p>
 
               <div className="preview-badge">
-                MindAR OneEuro auto-tune · adaptive deformation gate
+                MindAR OneEuro auto-tune · 3D point deadband 2px · adaptive deformation gate
               </div>
 
               <label>
@@ -603,6 +603,18 @@ export default function DeviceCheck({
                       trackingStatus
                         ? `${trackingStatus.rigidSignalPx.toFixed(2)} px`
                         : '-'
+                    }
+                  />
+                </label>
+
+                <label>
+                  <span>3D point deadband</span>
+                  <input
+                    readOnly
+                    value={
+                      trackingStatus
+                        ? `${trackingStatus.pointDeadbandPx.toFixed(2)} px / ${trackingStatus.pointDeadbandHeldCount} held`
+                        : '2.00 px'
                     }
                   />
                 </label>
