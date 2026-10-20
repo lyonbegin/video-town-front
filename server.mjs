@@ -27,7 +27,7 @@ const PORT =
   Number(process.env.PORT) || 4173;
 
 const MASK_RUNTIME_VERSION =
-  'mask-runtime-20261020-v5';
+  'mask-runtime-20261020-v6';
 
 const MASK_RUNTIME_FEATURES = {
   metricLandmarkDeadband: true,
@@ -206,6 +206,91 @@ async function handleDebugPost(
         filePath,
         `${lines}\n`,
         'utf8',
+      );
+    }
+
+    const runtimeProbeRecord =
+      [...records]
+        .reverse()
+        .find(
+          (record) =>
+            record?.type ===
+            'runtime_probe',
+        );
+
+    const configChangeRecord =
+      [...records]
+        .reverse()
+        .find(
+          (record) =>
+            record?.type ===
+            'point_deadband_config_change',
+        );
+
+    const effectRecord =
+      [...records]
+        .reverse()
+        .find(
+          (record) =>
+            record?.type ===
+            'point_deadband_effect',
+        );
+
+    if (
+      runtimeProbeRecord ||
+      configChangeRecord ||
+      effectRecord
+    ) {
+      console.log(
+        '[mask-debug-live]',
+        JSON.stringify({
+          sessionId,
+          runtimeProbe:
+            runtimeProbeRecord?.data ??
+            null,
+          configChange:
+            configChangeRecord?.data ??
+            null,
+          effect:
+            effectRecord
+              ? {
+                  revision:
+                    effectRecord.data
+                      ?.revision ?? null,
+                  thresholdPx:
+                    effectRecord.data
+                      ?.thresholdPx ?? null,
+                  heldCount:
+                    effectRecord.data
+                      ?.heldCount ?? null,
+                  changedCount:
+                    effectRecord.data
+                      ?.changedCount ?? null,
+                  totalPoints:
+                    effectRecord.data
+                      ?.totalPoints ?? null,
+                  heldRatio:
+                    effectRecord.data
+                      ?.heldRatio ?? null,
+                  geometrySuppressionRatio:
+                    effectRecord.data
+                      ?.geometrySuppressionRatio ??
+                    null,
+                  geometryOutputMotionMeanPx:
+                    effectRecord.data
+                      ?.geometryOutputMotionPx
+                      ?.mean ?? null,
+                  renderedMotionProxyMeanPx:
+                    effectRecord.data
+                      ?.renderedMotionProxyPx
+                      ?.mean ?? null,
+                  renderedVsGeometryRatio:
+                    effectRecord.data
+                      ?.renderedVsGeometryRatio ??
+                    null,
+                }
+              : null,
+        }),
       );
     }
 
@@ -1652,6 +1737,79 @@ const server =
     },
   );
 
+function runStartupEndpointSelfTest() {
+  const paths = [
+    '/__runtime-probe',
+    '/__mask-debug/latest/status.json',
+  ];
+
+  for (const pathname of paths) {
+    const request =
+      http.get(
+        {
+          host: '127.0.0.1',
+          port: PORT,
+          path: pathname,
+          headers: {
+            host: `127.0.0.1:${PORT}`,
+          },
+        },
+        (response) => {
+          const chunks = [];
+
+          response.on(
+            'data',
+            (chunk) => {
+              chunks.push(chunk);
+            },
+          );
+
+          response.on(
+            'end',
+            () => {
+              const body =
+                Buffer.concat(
+                  chunks,
+                ).toString(
+                  'utf8',
+                );
+
+              console.log(
+                '[mask-endpoint-selftest]',
+                JSON.stringify({
+                  path: pathname,
+                  statusCode:
+                    response.statusCode,
+                  body:
+                    body.slice(
+                      0,
+                      1800,
+                    ),
+                }),
+              );
+            },
+          );
+        },
+      );
+
+    request.on(
+      'error',
+      (error) => {
+        console.error(
+          '[mask-endpoint-selftest]',
+          JSON.stringify({
+            path: pathname,
+            error:
+              error instanceof Error
+                ? error.message
+                : String(error),
+          }),
+        );
+      },
+    );
+  }
+}
+
 server.listen(
   PORT,
   '0.0.0.0',
@@ -1662,5 +1820,7 @@ server.listen(
     console.log(
       `mask debug logs: ${LOG_DIR}`,
     );
+
+    runStartupEndpointSelfTest();
   },
 );

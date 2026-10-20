@@ -51,7 +51,7 @@ export const DEFAULT_GLOBAL_THRESHOLD_PX = 3.0;
 export const DEFAULT_EXPRESSION_THRESHOLD_PX = 1.5;
 export const DEFAULT_GATE_VERIFICATION_HZ = 15;
 export const MASK_RUNTIME_VERSION =
-  'mask-runtime-20261020-v5';
+  'mask-runtime-20261020-v6';
 
 // Seed selected by replaying the uploaded real session through MindAR 1.2.5's
 // exact OneEuro equation. Runtime tuning below keeps using MindAR's filter;
