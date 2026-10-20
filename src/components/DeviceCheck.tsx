@@ -6,6 +6,7 @@ import {
   DEFAULT_ONE_EURO_BETA,
   DEFAULT_ONE_EURO_MIN_CUTOFF,
   DEFAULT_POINT_DEADBAND_3D_PX,
+  MASK_RUNTIME_VERSION,
   type CameraMode,
   type MaskedCameraController,
   type TrackingStatus,
@@ -616,23 +617,63 @@ export default function DeviceCheck({
                     />
                   </label>
 
-                  <a
-                    className="primary-button"
-                    href={debugSession.downloadUrl}
-                    target="_blank"
-                    rel="noreferrer"
-                  >
-                    진단 로그 다운로드
-                  </a>
+                  <label>
+                    <span>클라이언트 런타임</span>
+                    <input
+                      readOnly
+                      value={MASK_RUNTIME_VERSION}
+                    />
+                  </label>
 
-                  <a
+                  <button
+                    type="button"
                     className="primary-button"
-                    href={debugSession.summaryUrl}
-                    target="_blank"
-                    rel="noreferrer"
+                    onClick={async () => {
+                      const controller =
+                        maskControllerRef.current;
+
+                      if (controller) {
+                        await controller.flushDebugSession();
+                      }
+
+                      const currentSession =
+                        controller?.getDebugSession() ??
+                        debugSession;
+
+                      window.open(
+                        `${currentSession.downloadUrl}?t=${Date.now()}`,
+                        '_blank',
+                        'noopener,noreferrer',
+                      );
+                    }}
                   >
-                    자동 분석 요약 보기
-                  </a>
+                    현재 세션 진단 로그 다운로드
+                  </button>
+
+                  <button
+                    type="button"
+                    className="primary-button"
+                    onClick={async () => {
+                      const controller =
+                        maskControllerRef.current;
+
+                      if (controller) {
+                        await controller.flushDebugSession();
+                      }
+
+                      const currentSession =
+                        controller?.getDebugSession() ??
+                        debugSession;
+
+                      window.open(
+                        `${currentSession.summaryUrl}?t=${Date.now()}`,
+                        '_blank',
+                        'noopener,noreferrer',
+                      );
+                    }}
+                  >
+                    현재 세션 자동 분석 보기
+                  </button>
                 </div>
               )}
 
