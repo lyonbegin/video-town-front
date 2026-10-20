@@ -1,4 +1,11 @@
-import { GlobalLandmarkGate } from './GlobalLandmarkGate';
+import {
+  CORE_LANDMARK_INDICES,
+  GlobalLandmarkGate,
+} from './GlobalLandmarkGate';
+import {
+  MaskDebugLogger,
+  type MaskDebugSessionInfo,
+} from './MaskDebugLogger';
 
 export type CameraMode = 'mask' | 'original';
 
@@ -24,6 +31,7 @@ export interface MaskedCameraController {
   setGlobalThresholdPx: (threshold: number) => void;
   setVerificationHz: (hz: number) => void;
   getTrackingStatus: () => TrackingStatus;
+  getDebugSession: () => MaskDebugSessionInfo;
 }
 
 type NormalizedLandmark = {
@@ -75,6 +83,9 @@ type MindARController = {
 
 type FaceMeshLike = {
   visible: boolean;
+  matrix?: {
+    elements?: ArrayLike<number>;
+  };
   material: {
     map?: unknown;
     transparent?: boolean;
@@ -142,6 +153,67 @@ const FACE_LOSS_GRACE_MS = 420;
 const VELOCITY_FILTER_WINDOW_SIZE = 5;
 const VELOCITY_FILTER_SCALE = 20.0;
 const ASSUMED_FRAME_MS = 1000 / 30;
+
+function flattenDetectedLandmarks(
+  landmarks: NormalizedLandmark[],
+) {
+  const output =
+    new Array<number>(
+      landmarks.length * 3,
+    );
+
+  let offset = 0;
+
+  for (
+    let i = 0;
+    i < landmarks.length;
+    i++
+  ) {
+    const point = landmarks[i];
+
+    output[offset++] = point.x;
+    output[offset++] = point.y;
+    output[offset++] = point.z;
+  }
+
+  return output;
+}
+
+function flattenNumericLandmarks(
+  landmarks: number[][],
+) {
+  const output =
+    new Array<number>(
+      landmarks.length * 3,
+    );
+
+  let offset = 0;
+
+  for (
+    let i = 0;
+    i < landmarks.length;
+    i++
+  ) {
+    const point = landmarks[i];
+
+    output[offset++] = point[0] ?? 0;
+    output[offset++] = point[1] ?? 0;
+    output[offset++] = point[2] ?? 0;
+  }
+
+  return output;
+}
+
+function copyFaceMatrix(
+  faceMesh: FaceMeshLike,
+) {
+  const elements =
+    faceMesh.matrix?.elements;
+
+  return elements
+    ? Array.from(elements)
+    : null;
+}
 
 /**
  * TypeScript port of MediaPipe RelativeVelocityFilter.
@@ -484,6 +556,7 @@ export async function createMaskedCameraStream(
 
   let mindarThree: MindARThreeInstance | undefined;
   let outputStream: MediaStream | undefined;
+  let debugLogger: MaskDebugLogger | undefined;
   let stopped = false;
   let trackingLoopEnabled = false;
 
@@ -545,6 +618,43 @@ export async function createMaskedCameraStream(
 
     const controller = mindar.controller;
 
+    debugLogger =
+      new MaskDebugLogger({
+        version: 'mask-diagnostics-v1',
+        video: {
+          width: video.videoWidth,
+          height: video.videoHeight,
+          frameRate:
+            (
+              video.srcObject as
+                | MediaStream
+                | null
+            )
+              ?.getVideoTracks()[0]
+              ?.getSettings()
+              .frameRate ?? null,
+        },
+        smoother: {
+          type:
+            'mediapipe-relative-velocity',
+          windowSize:
+            VELOCITY_FILTER_WINDOW_SIZE,
+          velocityScale:
+            VELOCITY_FILTER_SCALE,
+        },
+        gate: {
+          thresholdPx:
+            DEFAULT_GLOBAL_THRESHOLD_PX,
+          verificationHz:
+            DEFAULT_GATE_VERIFICATION_HZ,
+          requiredMovedCorePoints: 3,
+          coreLandmarkIndices:
+            Array.from(
+              CORE_LANDMARK_INDICES,
+            ),
+        },
+      });
+
     // MindAR's built-in loop never started. Our only tracking path is:
     // detect -> RelativeVelocity(raw landmarks) -> global core-point gate.
     // The gate decides whether the entire landmark frame is accepted.
@@ -573,6 +683,7 @@ export async function createMaskedCameraStream(
     let lastTrackingAt = 0;
     let frameIntervalMs = 33.3;
     let fps = 30;
+    let trackingFrameIndex = 0;
 
     const updateTrackingRate = (
       timestampMs: number,
@@ -633,6 +744,9 @@ export async function createMaskedCameraStream(
         detectionInput = flipped.canvas;
       }
 
+      const detectStartedAt =
+        performance.now();
+
       try {
         const results =
           await controller.faceMeshHelper.detect(
@@ -647,7 +761,11 @@ export async function createMaskedCameraStream(
         }
 
         const now = performance.now();
+        const detectDurationMs =
+          now - detectStartedAt;
+
         updateTrackingRate(now);
+        trackingFrameIndex++;
 
         if (
           !results.faceLandmarks ||
@@ -657,6 +775,26 @@ export async function createMaskedCameraStream(
           controller.onUpdate({
             hasFace: false,
           });
+
+          debugLogger?.log(
+            'tracking_frame',
+            {
+              frameIndex:
+                trackingFrameIndex,
+              detected: false,
+              detectDurationMs,
+              trackerFps: fps,
+              trackerFrameIntervalMs:
+                frameIntervalMs,
+              gate:
+                globalGate.getStatus(),
+              renderedFaceMatrix:
+                copyFaceMatrix(
+                  faceMesh,
+                ),
+            },
+            now,
+          );
 
           if (
             everSeenFace &&
@@ -689,6 +827,14 @@ export async function createMaskedCameraStream(
               now,
             );
 
+          let appliedEstimate:
+            | {
+                faceScale: number;
+                faceMatrix: number[];
+                metricLandmarks: number[];
+              }
+            | null = null;
+
           if (gateResult.accepted) {
             const estimateResult =
               controller.estimator.estimate(
@@ -714,7 +860,73 @@ export async function createMaskedCameraStream(
                 estimateResult.metricLandmarks,
               );
             }
+
+            appliedEstimate = {
+              faceScale:
+                estimateResult.faceScale,
+              faceMatrix:
+                Array.from(
+                  estimateResult.faceMatrix,
+                ),
+              metricLandmarks:
+                flattenNumericLandmarks(
+                  estimateResult.metricLandmarks,
+                ),
+            };
           }
+
+          debugLogger?.log(
+            'tracking_frame',
+            {
+              frameIndex:
+                trackingFrameIndex,
+              detected: true,
+              detectDurationMs,
+              trackerFps: fps,
+              trackerFrameIntervalMs:
+                frameIntervalMs,
+              videoWidth:
+                video.videoWidth,
+              videoHeight:
+                video.videoHeight,
+              rawNormalized:
+                flattenDetectedLandmarks(
+                  results.faceLandmarks[0],
+                ),
+              smoothedNormalized:
+                flattenNumericLandmarks(
+                  smoothedLandmarks,
+                ),
+              gate: {
+                ...globalGate.getStatus(),
+                firstFrame:
+                  gateResult.firstFrame,
+                coreMeasurements:
+                  gateResult.coreMeasurements,
+              },
+              appliedEstimate,
+              currentOutputEstimate:
+                controller.lastEstimateResult
+                  ? {
+                      faceScale:
+                        controller
+                          .lastEstimateResult
+                          .faceScale,
+                      faceMatrix:
+                        Array.from(
+                          controller
+                            .lastEstimateResult
+                            .faceMatrix,
+                        ),
+                    }
+                  : null,
+              renderedFaceMatrix:
+                copyFaceMatrix(
+                  faceMesh,
+                ),
+            },
+            now,
+          );
 
           lastSeenAt = now;
           everSeenFace = true;
@@ -855,6 +1067,18 @@ export async function createMaskedCameraStream(
       globalGate.setThresholdPx(
         threshold,
       );
+
+      debugLogger?.log(
+        'config_change',
+        {
+          globalThresholdPx:
+            globalGate.getStatus()
+              .thresholdPx,
+          verificationHz:
+            globalGate.getStatus()
+              .verificationHz,
+        },
+      );
     };
 
     const setVerificationHz = (
@@ -863,13 +1087,35 @@ export async function createMaskedCameraStream(
       globalGate.setVerificationHz(
         hz,
       );
+
+      debugLogger?.log(
+        'config_change',
+        {
+          globalThresholdPx:
+            globalGate.getStatus()
+              .thresholdPx,
+          verificationHz:
+            globalGate.getStatus()
+              .verificationHz,
+        },
+      );
     };
+
+    const getDebugSession =
+      () =>
+        debugLogger!.getSessionInfo();
 
     const stop = () => {
       if (stopped) return;
 
       stopped = true;
       trackingLoopEnabled = false;
+
+      debugLogger?.stop({
+        trackingFrameIndex,
+        trackingStatus:
+          getTrackingStatus(),
+      });
 
       try {
         renderer.setAnimationLoop(null);
@@ -924,10 +1170,18 @@ export async function createMaskedCameraStream(
       setGlobalThresholdPx,
       setVerificationHz,
       getTrackingStatus,
+      getDebugSession,
     };
   } catch (error) {
     stopped = true;
     trackingLoopEnabled = false;
+
+    debugLogger?.stop({
+      error:
+        error instanceof Error
+          ? error.message
+          : String(error),
+    });
 
     try {
       mindarThree?.renderer.setAnimationLoop(
