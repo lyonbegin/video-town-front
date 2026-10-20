@@ -2,10 +2,9 @@
 import {
   createMaskedCameraStream,
   DEFAULT_MASK_TUNING,
-  type CalibrationResult,
+  type AdaptiveFilterStatus,
   type CameraMode,
   type MaskedCameraController,
-  type MaskTuning,
 } from '../mask/MaskedCamera';
 
 interface Props {
@@ -25,6 +24,7 @@ export default function DeviceCheck({
 }: Props) {
   const previewRef = useRef<HTMLVideoElement>(null);
   const maskControllerRef = useRef<MaskedCameraController>();
+
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
@@ -32,27 +32,13 @@ export default function DeviceCheck({
   const [micId, setMicId] = useState('');
   const [level, setLevel] = useState(0);
   const [cameraMode, setCameraMode] = useState<CameraMode>('mask');
-  const [minCutoff, setMinCutoff] = useState(
-    DEFAULT_MASK_TUNING.minCutoff,
-  );
-  const [beta, setBeta] = useState(
-    DEFAULT_MASK_TUNING.beta,
-  );
-  const [calibrating, setCalibrating] = useState(false);
-  const [calibrationStartedAt, setCalibrationStartedAt] = useState(0);
-  const [calibrationElapsed, setCalibrationElapsed] = useState(0);
-  const [calibrationSamples, setCalibrationSamples] = useState(0);
-  const [calibrationResult, setCalibrationResult] =
-    useState<CalibrationResult | null>(null);
-  const [calibrationMessage, setCalibrationMessage] = useState('');
-
-  const currentTuning = (): MaskTuning => ({
-    minCutoff,
-    beta,
-  });
+  const [adaptiveStatus, setAdaptiveStatus] =
+    useState<AdaptiveFilterStatus | null>(null);
 
   useEffect(() => {
-    if (previewRef.current) previewRef.current.srcObject = stream ?? null;
+    if (previewRef.current) {
+      previewRef.current.srcObject = stream ?? null;
+    }
   }, [stream]);
 
   useEffect(() => {
@@ -61,7 +47,9 @@ export default function DeviceCheck({
       return;
     }
 
-    const Context = window.AudioContext || (window as any).webkitAudioContext;
+    const Context =
+      window.AudioContext || (window as any).webkitAudioContext;
+
     const context = new Context();
     const analyser = context.createAnalyser();
     analyser.fftSize = 256;
@@ -71,11 +59,13 @@ export default function DeviceCheck({
     );
 
     source.connect(analyser);
+
     const data = new Uint8Array(analyser.frequencyBinCount);
     let raf = 0;
 
     const tick = () => {
       analyser.getByteFrequencyData(data);
+
       const avg =
         data.reduce((sum, value) => sum + value, 0) /
         Math.max(1, data.length);
@@ -94,26 +84,27 @@ export default function DeviceCheck({
   }, [stream]);
 
   useEffect(() => {
-    if (!calibrating) {
-      setCalibrationElapsed(0);
+    if (cameraMode !== 'mask' || !stream) {
+      setAdaptiveStatus(null);
       return;
     }
 
     const update = () => {
-      setCalibrationElapsed(
-        Math.max(0, (performance.now() - calibrationStartedAt) / 1000),
-      );
+      const controller = maskControllerRef.current;
 
-      setCalibrationSamples(
-        maskControllerRef.current?.getCalibrationSampleCount() ?? 0,
-      );
+      if (!controller) {
+        setAdaptiveStatus(null);
+        return;
+      }
+
+      setAdaptiveStatus(controller.getAdaptiveStatus());
     };
 
     update();
-    const timer = window.setInterval(update, 200);
+    const timer = window.setInterval(update, 250);
 
     return () => window.clearInterval(timer);
-  }, [calibrating, calibrationStartedAt]);
+  }, [cameraMode, stream]);
 
   const cameras = useMemo(
     () => devices.filter((d) => d.kind === 'videoinput'),
@@ -129,16 +120,15 @@ export default function DeviceCheck({
     nextCameraId = cameraId,
     nextMicId = micId,
     nextMode: CameraMode = cameraMode,
-    nextTuning: MaskTuning = currentTuning(),
   ) {
     setBusy(true);
     setError('');
-    setCalibrating(false);
+    setAdaptiveStatus(null);
 
     try {
-      // Stop only the previous client camera pipeline.
       maskControllerRef.current?.stop();
       maskControllerRef.current = undefined;
+
       stream?.getTracks().forEach((track) => track.stop());
 
       const raw = await navigator.mediaDevices.getUserMedia({
@@ -173,10 +163,12 @@ export default function DeviceCheck({
         try {
           const controller = await createMaskedCameraStream(
             raw,
-            nextTuning,
+            DEFAULT_MASK_TUNING,
           );
+
           maskControllerRef.current = controller;
           outgoing = controller.stream;
+          setAdaptiveStatus(controller.getAdaptiveStatus());
         } catch (maskError) {
           raw.getTracks().forEach((track) => track.stop());
           throw maskError;
@@ -185,17 +177,28 @@ export default function DeviceCheck({
 
       onStream(outgoing);
 
-      const allDevices = await navigator.mediaDevices.enumerateDevices();
+      const allDevices =
+        await navigator.mediaDevices.enumerateDevices();
+
       setDevices(allDevices);
 
-      // Device IDs must be read from the physical source, not the canvas track.
-      const videoSettings = raw.getVideoTracks()[0]?.getSettings();
-      const audioSettings = raw.getAudioTracks()[0]?.getSettings();
+      const videoSettings =
+        raw.getVideoTracks()[0]?.getSettings();
 
-      if (videoSettings?.deviceId) setCameraId(videoSettings.deviceId);
-      if (audioSettings?.deviceId) setMicId(audioSettings.deviceId);
+      const audioSettings =
+        raw.getAudioTracks()[0]?.getSettings();
+
+      if (videoSettings?.deviceId) {
+        setCameraId(videoSettings.deviceId);
+      }
+
+      if (audioSettings?.deviceId) {
+        setMicId(audioSettings.deviceId);
+      }
     } catch (e) {
-      const message = e instanceof Error ? e.message : String(e);
+      const message =
+        e instanceof Error ? e.message : String(e);
+
       setError(
         `카메라 또는 마이크를 사용할 수 없습니다. 브라우저 권한과 복면 모듈을 확인해주세요. (${message})`,
       );
@@ -204,65 +207,9 @@ export default function DeviceCheck({
     }
   }
 
-  function startAutoCalibration() {
-    const controller = maskControllerRef.current;
-
-    if (!controller || cameraMode !== 'mask') {
-      setCalibrationMessage('복면 카메라를 먼저 시작해주세요.');
-      return;
-    }
-
-    setCalibrationResult(null);
-    setCalibrationMessage(
-      '녹화 중입니다. 처음에는 잠깐 정면으로 가만히 있고, 이어서 좌우·상하로 자연스럽게 움직여주세요.',
-    );
-    setCalibrationSamples(0);
-    setCalibrationStartedAt(performance.now());
-    controller.startCalibration();
-    setCalibrating(true);
-  }
-
-  async function finishAutoCalibration() {
-    const controller = maskControllerRef.current;
-
-    if (!controller || !calibrating) return;
-
-    setCalibrating(false);
-    setCalibrationMessage('녹화를 끝냈습니다. 최적 필터 값을 계산하고 있습니다…');
-
-    // Let React paint the analysis state before the synchronous replay search.
-    await new Promise<void>((resolve) =>
-      requestAnimationFrame(() => resolve()),
-    );
-
-    try {
-      const result = controller.finishCalibration();
-
-      setCalibrationResult(result);
-      setMinCutoff(result.tuning.minCutoff);
-      setBeta(result.tuning.beta);
-
-      setCalibrationMessage(
-        `자동 캘리브레이션 완료 · ${result.sampleCount}프레임 · ${(
-          result.durationMs / 1000
-        ).toFixed(1)}초 · score ${result.score.toFixed(6)}`,
-      );
-
-      // Restart the MindAR pipeline once with the chosen single filter values.
-      await acquire(
-        cameraId,
-        micId,
-        'mask',
-        result.tuning,
-      );
-    } catch (e) {
-      const message = e instanceof Error ? e.message : String(e);
-      setCalibrationMessage(`자동 캘리브레이션 실패: ${message}`);
-    }
-  }
-
   async function changeMode(nextMode: CameraMode) {
     setCameraMode(nextMode);
+
     if (stream) {
       await acquire(cameraId, micId, nextMode);
     }
@@ -272,25 +219,30 @@ export default function DeviceCheck({
     <section className="device-card">
       <div className="section-kicker">영상 모드 선택</div>
       <h2>얼굴 공개 또는 복면 모드를 선택하세요</h2>
+
       <p className="muted-text">
-        복면 모드는 이 브라우저에서 얼굴을 가린 뒤 기존 WebRTC 서버로 전송합니다.
-        Fly 서버와 mediasoup 프로토콜은 그대로 사용합니다.
+        복면 모드는 이 브라우저에서 얼굴에 마스크를 합성한 뒤
+        그 결과 영상만 WebRTC로 전송합니다.
       </p>
 
       <div className="camera-mode-selector">
         <button
           type="button"
-          className={`camera-mode-button ${cameraMode === 'mask' ? 'active' : ''}`}
+          className={`camera-mode-button ${
+            cameraMode === 'mask' ? 'active' : ''
+          }`}
           onClick={() => void changeMode('mask')}
           disabled={busy || ready || disabled}
         >
           <strong>🎭 복면</strong>
-          <span>얼굴을 종이 가면으로 가려서 전송</span>
+          <span>마스크가 합성된 영상만 전송</span>
         </button>
 
         <button
           type="button"
-          className={`camera-mode-button ${cameraMode === 'original' ? 'active' : ''}`}
+          className={`camera-mode-button ${
+            cameraMode === 'original' ? 'active' : ''
+          }`}
           onClick={() => void changeMode('original')}
           disabled={busy || ready || disabled}
         >
@@ -323,8 +275,11 @@ export default function DeviceCheck({
               muted
               className="device-preview"
             />
+
             <div className="preview-badge">
-              {cameraMode === 'mask' ? '🎭 복면 송출 화면' : '📹 얼굴 공개 화면'}
+              {cameraMode === 'mask'
+                ? '🎭 복면 송출 화면'
+                : '📹 얼굴 공개 화면'}
             </div>
           </div>
 
@@ -335,12 +290,20 @@ export default function DeviceCheck({
                 value={cameraId}
                 onChange={(e) => {
                   setCameraId(e.target.value);
-                  void acquire(e.target.value, micId, cameraMode);
+
+                  void acquire(
+                    e.target.value,
+                    micId,
+                    cameraMode,
+                  );
                 }}
                 disabled={busy || ready}
               >
                 {cameras.map((device, index) => (
-                  <option key={device.deviceId} value={device.deviceId}>
+                  <option
+                    key={device.deviceId}
+                    value={device.deviceId}
+                  >
                     {device.label || `카메라 ${index + 1}`}
                   </option>
                 ))}
@@ -353,12 +316,20 @@ export default function DeviceCheck({
                 value={micId}
                 onChange={(e) => {
                   setMicId(e.target.value);
-                  void acquire(cameraId, e.target.value, cameraMode);
+
+                  void acquire(
+                    cameraId,
+                    e.target.value,
+                    cameraMode,
+                  );
                 }}
                 disabled={busy || ready}
               >
                 {microphones.map((device, index) => (
-                  <option key={device.deviceId} value={device.deviceId}>
+                  <option
+                    key={device.deviceId}
+                    value={device.deviceId}
+                  >
                     {device.label || `마이크 ${index + 1}`}
                   </option>
                 ))}
@@ -368,143 +339,137 @@ export default function DeviceCheck({
 
           {cameraMode === 'mask' && (
             <>
-              <div className="section-kicker">복면 추적 필터 수동 조정</div>
+              <div className="section-kicker">
+                자동 적응형 마스크 추적
+              </div>
+
+              <p className="muted-text">
+                카메라 시작 직후 약 2초 동안 현재 카메라 노이즈와
+                처리 속도를 측정하고, 이후에도 프레임마다 얼굴 움직임과
+                지터를 감시하면서 MindAR One Euro의 minCutOff와 beta를
+                계속 자동 조정합니다. 별도의 두 번째 보간 필터는 없습니다.
+              </p>
+
+              <div className="preview-badge">
+                {adaptiveStatus?.phase === 'adaptive'
+                  ? '자동 최적화 진행 중'
+                  : '초기 자동 측정 중'}
+              </div>
 
               <div className="device-grid">
                 <label>
-                  <span>MindAR One Euro · minCutOff</span>
+                  <span>현재 minCutOff</span>
                   <input
-                    type="number"
-                    min="0.00005"
-                    max="0.1"
-                    step="0.0001"
-                    value={minCutoff}
-                    onChange={(e) =>
-                      setMinCutoff(Number(e.target.value))
+                    readOnly
+                    value={
+                      adaptiveStatus
+                        ? adaptiveStatus.minCutoff.toFixed(6)
+                        : '-'
                     }
-                    disabled={busy || ready}
                   />
                 </label>
 
                 <label>
-                  <span>MindAR One Euro · beta</span>
+                  <span>현재 beta</span>
                   <input
-                    type="number"
-                    min="0"
-                    max="30"
-                    step="0.1"
-                    value={beta}
-                    onChange={(e) =>
-                      setBeta(Number(e.target.value))
+                    readOnly
+                    value={
+                      adaptiveStatus
+                        ? adaptiveStatus.beta.toFixed(3)
+                        : '-'
                     }
-                    disabled={busy || ready}
+                  />
+                </label>
+
+                <label>
+                  <span>추적 FPS</span>
+                  <input
+                    readOnly
+                    value={
+                      adaptiveStatus
+                        ? adaptiveStatus.fps.toFixed(1)
+                        : '-'
+                    }
+                  />
+                </label>
+
+                <label>
+                  <span>프레임 간격(ms)</span>
+                  <input
+                    readOnly
+                    value={
+                      adaptiveStatus
+                        ? adaptiveStatus.frameIntervalMs.toFixed(1)
+                        : '-'
+                    }
+                  />
+                </label>
+
+                <label>
+                  <span>카메라 노이즈</span>
+                  <input
+                    readOnly
+                    value={
+                      adaptiveStatus
+                        ? adaptiveStatus.noiseFloor.toFixed(6)
+                        : '-'
+                    }
+                  />
+                </label>
+
+                <label>
+                  <span>정지 지터</span>
+                  <input
+                    readOnly
+                    value={
+                      adaptiveStatus
+                        ? adaptiveStatus.stationaryJitter.toFixed(6)
+                        : '-'
+                    }
+                  />
+                </label>
+
+                <label>
+                  <span>추적 오차</span>
+                  <input
+                    readOnly
+                    value={
+                      adaptiveStatus
+                        ? adaptiveStatus.trackingError.toFixed(6)
+                        : '-'
+                    }
+                  />
+                </label>
+
+                <label>
+                  <span>움직임 응답률</span>
+                  <input
+                    readOnly
+                    value={
+                      adaptiveStatus
+                        ? adaptiveStatus.responseRatio.toFixed(3)
+                        : '-'
+                    }
                   />
                 </label>
               </div>
-
-              <button
-                type="button"
-                className="primary-button"
-                onClick={() =>
-                  void acquire(
-                    cameraId,
-                    micId,
-                    'mask',
-                    currentTuning(),
-                  )
-                }
-                disabled={busy || ready || disabled}
-              >
-                {busy ? '필터 적용 중…' : '필터 값 적용'}
-              </button>
-
-              <p className="muted-text">
-                실시간 보간 필터는 MindAR One Euro 하나만 사용합니다.
-                기본값: minCutOff 0.001 / beta 1.0
-              </p>
-
-              <div className="section-kicker">자동 캘리브레이션</div>
-
-              <p className="muted-text">
-                시작 버튼부터 끝 버튼까지 실제 얼굴 landmark를 녹화한 뒤,
-                같은 녹화 데이터를 MindAR One Euro의 minCutOff / beta
-                조합으로 반복 계산해서 지터와 추적 오차가 가장 작은 값을 찾습니다.
-              </p>
-
-              <div className="camera-mode-selector">
-                <button
-                  type="button"
-                  className={`camera-mode-button ${calibrating ? 'active' : ''}`}
-                  onClick={startAutoCalibration}
-                  disabled={
-                    busy ||
-                    ready ||
-                    disabled ||
-                    calibrating ||
-                    !maskControllerRef.current
-                  }
-                >
-                  <strong>● 캘리브레이션 시작</strong>
-                  <span>얼굴 포인트 녹화 시작</span>
-                </button>
-
-                <button
-                  type="button"
-                  className="camera-mode-button"
-                  onClick={() => void finishAutoCalibration()}
-                  disabled={
-                    busy ||
-                    ready ||
-                    disabled ||
-                    !calibrating
-                  }
-                >
-                  <strong>■ 캘리브레이션 끝</strong>
-                  <span>녹화 종료 후 자동 분석·적용</span>
-                </button>
-              </div>
-
-              {calibrating && (
-                <p className="muted-text">
-                  녹화 중 · {calibrationElapsed.toFixed(1)}초 ·
-                  {' '}{calibrationSamples}프레임
-                </p>
-              )}
-
-              {calibrationMessage && (
-                <div className="preview-badge">
-                  {calibrationMessage}
-                </div>
-              )}
-
-              {calibrationResult && (
-                <div className="device-grid">
-                  <label>
-                    <span>자동 결과 · tracking error</span>
-                    <input
-                      readOnly
-                      value={calibrationResult.trackingError.toFixed(6)}
-                    />
-                  </label>
-
-                  <label>
-                    <span>자동 결과 · stationary jitter</span>
-                    <input
-                      readOnly
-                      value={calibrationResult.stationaryJitter.toFixed(6)}
-                    />
-                  </label>
-                </div>
-              )}
             </>
           )}
 
           <div className="mic-meter-row">
             <span>마이크 입력</span>
+
             <div className="meter">
-              <i style={{ width: `${Math.max(4, level)}%` }} />
+              <i
+                style={{
+                  width: `${Math.max(4, level)}%`,
+                }}
+              />
             </div>
-            <strong>{level > 8 ? '정상' : '말해보세요'}</strong>
+
+            <strong>
+              {level > 8 ? '정상' : '말해보세요'}
+            </strong>
           </div>
 
           <button
