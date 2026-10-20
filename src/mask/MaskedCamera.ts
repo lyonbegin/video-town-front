@@ -43,33 +43,10 @@ type FaceGeometryLike = {
   updatePositions: (metricLandmarks: number[][]) => void;
 };
 
-type FaceLandmarkerLike = {
-  setOptions: (options: {
-    runningMode: 'IMAGE' | 'VIDEO';
-  }) => Promise<void>;
-  detectForVideo: (
-    input: HTMLVideoElement | HTMLCanvasElement,
-    timestampMs: number,
-  ) => FaceMeshDetectionResult;
-};
-
 type FaceMeshHelperLike = {
   detect: (
     input: HTMLVideoElement | HTMLCanvasElement,
   ) => Promise<FaceMeshDetectionResult>;
-  faceLandmarker?: FaceLandmarkerLike;
-};
-
-type VideoWithFrameCallback = HTMLVideoElement & {
-  requestVideoFrameCallback?: (
-    callback: (
-      now: number,
-      metadata: { mediaTime?: number },
-    ) => void,
-  ) => number;
-  cancelVideoFrameCallback?: (
-    handle: number,
-  ) => void;
 };
 
 type EstimatorLike = {
@@ -457,21 +434,9 @@ function createFlippedInput(
   width: number,
   height: number,
 ) {
-  const maxTrackingWidth = 640;
-  const scale = Math.min(
-    1,
-    maxTrackingWidth / Math.max(1, width),
-  );
-
   const canvas = document.createElement('canvas');
-  canvas.width = Math.max(
-    320,
-    Math.round(width * scale),
-  );
-  canvas.height = Math.max(
-    180,
-    Math.round(height * scale),
-  );
+  canvas.width = width;
+  canvas.height = height;
 
   const context = canvas.getContext('2d');
 
@@ -575,24 +540,6 @@ export async function createMaskedCameraStream(
 
     const controller = mindar.controller;
 
-    // MindAR 1.2.5 initializes FaceLandmarker in IMAGE mode. For a live camera
-    // that repeats full image inference on every call. Switch the same tracker
-    // to VIDEO mode so MediaPipe can reuse temporal tracking state.
-    const faceLandmarker =
-      controller.faceMeshHelper.faceLandmarker;
-
-    let useVideoMode = false;
-
-    if (
-      faceLandmarker?.setOptions &&
-      faceLandmarker?.detectForVideo
-    ) {
-      await faceLandmarker.setOptions({
-        runningMode: 'VIDEO',
-      });
-      useVideoMode = true;
-    }
-
     // MindAR's built-in loop never started. Our only tracking path is:
     // detect -> RelativeVelocity(raw landmarks) -> simple absolute deadband
     //        -> estimate -> matrix + geometry from the SAME landmarks.
@@ -600,10 +547,6 @@ export async function createMaskedCameraStream(
     const smoother =
       new FaceLandmarksSmoother();
 
-    // Independent second-stage stabilizer.
-    // No learning or interpolation: compare the current x/y/z values with the
-    // last values actually sent downstream. Small absolute differences are
-    // held exactly; larger changes pass immediately.
     const deadband =
       new AbsoluteLandmarkDeadband(
         DEFAULT_DEADBAND_THRESHOLD,
@@ -644,54 +587,13 @@ export async function createMaskedCameraStream(
 
     trackingLoopEnabled = true;
 
-    const videoWithFrameCallback =
-      video as VideoWithFrameCallback;
-
-    let videoFrameHandle = 0;
-    let fallbackFrameHandle = 0;
-    let processingFrame = false;
-
-    const scheduleTrackingFrame = () => {
+    const processFrame = async () => {
       if (
         stopped ||
         !trackingLoopEnabled
       ) {
         return;
       }
-
-      if (
-        videoWithFrameCallback
-          .requestVideoFrameCallback
-      ) {
-        videoFrameHandle =
-          videoWithFrameCallback
-            .requestVideoFrameCallback(
-              (now) => {
-                void processFrame(now);
-              },
-            );
-      } else {
-        fallbackFrameHandle =
-          requestAnimationFrame(
-            (now) => {
-              void processFrame(now);
-            },
-          );
-      }
-    };
-
-    const processFrame = async (
-      frameTimestampMs: number,
-    ) => {
-      if (
-        stopped ||
-        !trackingLoopEnabled ||
-        processingFrame
-      ) {
-        return;
-      }
-
-      processingFrame = true;
 
       let detectionInput:
         | HTMLVideoElement
@@ -726,14 +628,9 @@ export async function createMaskedCameraStream(
 
       try {
         const results =
-          useVideoMode && faceLandmarker
-            ? faceLandmarker.detectForVideo(
-                detectionInput,
-                frameTimestampMs,
-              )
-            : await controller.faceMeshHelper.detect(
-                detectionInput,
-              );
+          await controller.faceMeshHelper.detect(
+            detectionInput,
+          );
 
         if (
           stopped ||
@@ -742,9 +639,8 @@ export async function createMaskedCameraStream(
           return;
         }
 
-        updateTrackingRate(
-          frameTimestampMs,
-        );
+        const now = performance.now();
+        updateTrackingRate(now);
 
         if (
           !results.faceLandmarks ||
@@ -760,9 +656,11 @@ export async function createMaskedCameraStream(
 
           if (
             everSeenFace &&
-            frameTimestampMs - lastSeenAt <=
+            now - lastSeenAt <=
               FACE_LOSS_GRACE_MS
           ) {
+            // MindAR's onUpdate hides the mesh immediately. Keep the last
+            // rendered mesh briefly through short detector misses.
             faceMesh.visible = true;
           } else if (everSeenFace) {
             faceMesh.visible = false;
@@ -771,7 +669,7 @@ export async function createMaskedCameraStream(
           const smoothedLandmarks =
             smoother.smooth(
               results.faceLandmarks[0],
-              frameTimestampMs,
+              now,
               video.videoWidth,
               video.videoHeight,
             );
@@ -792,11 +690,15 @@ export async function createMaskedCameraStream(
           controller.lastEstimateResult =
             estimateResult;
 
+          // MindARThree's original onUpdate applies the same estimateResult
+          // to faceMesh.matrix and latestEstimate.
           controller.onUpdate({
             hasFace: true,
             estimateResult,
           });
 
+          // Crucially, geometry now receives the same smoothed estimate that
+          // generated faceMatrix. No raw-landmark geometry branch remains.
           for (
             const geometry of
             controller.customFaceGeometries
@@ -806,18 +708,25 @@ export async function createMaskedCameraStream(
             );
           }
 
-          lastSeenAt =
-            frameTimestampMs;
+          lastSeenAt = now;
           everSeenFace = true;
           faceMesh.visible = true;
         }
       } finally {
-        processingFrame = false;
-        scheduleTrackingFrame();
+        if (
+          !stopped &&
+          trackingLoopEnabled
+        ) {
+          requestAnimationFrame(
+            () => void processFrame(),
+          );
+        }
       }
     };
 
-    scheduleTrackingFrame();
+    requestAnimationFrame(
+      () => void processFrame(),
+    );
 
     const outputScale = Math.min(
       1,
@@ -856,28 +765,8 @@ export async function createMaskedCameraStream(
       );
     }
 
-    const mindarVideoTrack =
-      (video.srcObject as MediaStream | null)
-        ?.getVideoTracks()[0];
-
-    const cameraFrameRate =
-      mindarVideoTrack
-        ?.getSettings()
-        .frameRate ?? 30;
-
-    const outputFrameRate =
-      Math.min(
-        60,
-        Math.max(
-          15,
-          Math.round(cameraFrameRate),
-        ),
-      );
-
     const canvasStream =
-      outputCanvas.captureStream(
-        outputFrameRate,
-      );
+      outputCanvas.captureStream(60);
 
     const outputVideoTrack =
       canvasStream.getVideoTracks()[0];
@@ -895,22 +784,8 @@ export async function createMaskedCameraStream(
       ...source.getAudioTracks(),
     ]);
 
-    let lastOutputAt = 0;
-    const outputIntervalMs =
-      1000 / outputFrameRate;
-
-    renderer.setAnimationLoop((now) => {
+    renderer.setAnimationLoop(() => {
       if (stopped) return;
-
-      if (
-        lastOutputAt > 0 &&
-        now - lastOutputAt <
-          outputIntervalMs - 1
-      ) {
-        return;
-      }
-
-      lastOutputAt = now;
 
       renderer.render(
         scene,
@@ -971,23 +846,6 @@ export async function createMaskedCameraStream(
 
       stopped = true;
       trackingLoopEnabled = false;
-
-      if (
-        videoFrameHandle &&
-        videoWithFrameCallback
-          .cancelVideoFrameCallback
-      ) {
-        videoWithFrameCallback
-          .cancelVideoFrameCallback(
-            videoFrameHandle,
-          );
-      }
-
-      if (fallbackFrameHandle) {
-        cancelAnimationFrame(
-          fallbackFrameHandle,
-        );
-      }
 
       try {
         renderer.setAnimationLoop(null);
