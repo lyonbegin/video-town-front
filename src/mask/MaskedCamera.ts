@@ -1140,21 +1140,22 @@ class Absolute3DPointDeadband {
     this.heldCount = 0;
   }
 
-  apply(
-    points: number[][],
-    imageWidth: number,
-    imageHeight: number,
+  applyMetric(
+    metricLandmarks: number[][],
+    pixelsPerMetricUnit: number,
   ) {
     if (
       this.heldPoints.length !==
-      points.length
+      metricLandmarks.length
     ) {
       this.heldPoints =
-        points.map((point) => [
-          point[0] ?? 0,
-          point[1] ?? 0,
-          point[2] ?? 0,
-        ]);
+        metricLandmarks.map(
+          (point) => [
+            point[0] ?? 0,
+            point[1] ?? 0,
+            point[2] ?? 0,
+          ],
+        );
 
       this.heldCount = 0;
 
@@ -1163,48 +1164,44 @@ class Absolute3DPointDeadband {
       );
     }
 
-    const width =
-      Math.max(1, imageWidth);
-
-    const height =
-      Math.max(1, imageHeight);
+    const pxScale =
+      Math.max(
+        0.000001,
+        pixelsPerMetricUnit,
+      );
 
     let heldCount = 0;
 
     for (
       let i = 0;
-      i < points.length;
+      i < metricLandmarks.length;
       i++
     ) {
       const current =
-        points[i];
+        metricLandmarks[i];
 
       const previous =
         this.heldPoints[i];
 
       const dx =
-        ((current[0] ?? 0) -
-          (previous[0] ?? 0)) *
-        width;
+        (current[0] ?? 0) -
+        (previous[0] ?? 0);
 
       const dy =
-        ((current[1] ?? 0) -
-          (previous[1] ?? 0)) *
-        height;
+        (current[1] ?? 0) -
+        (previous[1] ?? 0);
 
-      // MediaPipe normalized z uses approximately the same scale as x,
-      // so width is used to convert z to pixel-equivalent units.
       const dz =
-        ((current[2] ?? 0) -
-          (previous[2] ?? 0)) *
-        width;
+        (current[2] ?? 0) -
+        (previous[2] ?? 0);
 
       const distancePx =
         Math.hypot(
           dx,
           dy,
           dz,
-        );
+        ) *
+        pxScale;
 
       if (
         distancePx <
@@ -1241,6 +1238,102 @@ class Absolute3DPointDeadband {
   }
 }
 
+
+const METRIC_SCALE_PAIRS = [
+  [234, 454],
+  [33, 263],
+  [127, 356],
+  [10, 152],
+  [61, 291],
+] as const;
+
+function estimatePixelsPerMetricUnit(
+  normalizedLandmarks: number[][],
+  metricLandmarks: number[][],
+  imageWidth: number,
+  imageHeight: number,
+) {
+  const ratios: number[] = [];
+
+  for (
+    const [a, b] of
+    METRIC_SCALE_PAIRS
+  ) {
+    const na =
+      normalizedLandmarks[a];
+
+    const nb =
+      normalizedLandmarks[b];
+
+    const ma =
+      metricLandmarks[a];
+
+    const mb =
+      metricLandmarks[b];
+
+    if (
+      !na ||
+      !nb ||
+      !ma ||
+      !mb
+    ) {
+      continue;
+    }
+
+    const normalizedDistancePx =
+      Math.hypot(
+        ((na[0] ?? 0) -
+          (nb[0] ?? 0)) *
+          imageWidth,
+        ((na[1] ?? 0) -
+          (nb[1] ?? 0)) *
+          imageHeight,
+        ((na[2] ?? 0) -
+          (nb[2] ?? 0)) *
+          imageWidth,
+      );
+
+    const metricDistance =
+      Math.hypot(
+        (ma[0] ?? 0) -
+          (mb[0] ?? 0),
+        (ma[1] ?? 0) -
+          (mb[1] ?? 0),
+        (ma[2] ?? 0) -
+          (mb[2] ?? 0),
+      );
+
+    if (
+      metricDistance > 1e-6 &&
+      normalizedDistancePx > 0
+    ) {
+      ratios.push(
+        normalizedDistancePx /
+          metricDistance,
+      );
+    }
+  }
+
+  if (ratios.length === 0) {
+    return 1;
+  }
+
+  ratios.sort(
+    (a, b) => a - b,
+  );
+
+  const middle =
+    Math.floor(
+      ratios.length / 2,
+    );
+
+  return ratios.length % 2 === 1
+    ? ratios[middle]
+    : (
+        ratios[middle - 1] +
+        ratios[middle]
+      ) / 2;
+}
 
 class FaceLandmarksSmoother {
   private xFilters: RelativeVelocityFilter[] = [];
@@ -1830,13 +1923,6 @@ export async function createMaskedCameraStream(
               video.videoHeight,
             );
 
-          const deadbandedLandmarks =
-            pointDeadband.apply(
-              smoothedLandmarks,
-              video.videoWidth,
-              video.videoHeight,
-            );
-
           // Estimate pose from RAW landmarks so the 468-point smoother cannot
           // introduce head-follow lag. Then run the exact OneEuro filters that
           // MindAR 1.2.5 normally applies inside Controller.processVideo().
@@ -1912,58 +1998,62 @@ export async function createMaskedCameraStream(
               livePoseEstimate,
           });
 
-          // The adaptive gate is now used ONLY for mesh deformation. Holding a
-          // deformation frame cannot hold the whole mask at an old position.
+          // Deformation is estimated every tracking frame. The old global
+          // gate remains telemetry/calibration only and no longer blocks
+          // geometry updates, so the live point slider has direct visual effect.
+          const deformationEstimate =
+            controller.estimator.estimate(
+              smoothedLandmarks,
+            );
+
+          deformationEstimate.blendshapes =
+            results.faceBlendshapes?.[0];
+
+          const pixelsPerMetricUnit =
+            estimatePixelsPerMetricUnit(
+              smoothedLandmarks,
+              deformationEstimate.metricLandmarks,
+              video.videoWidth,
+              video.videoHeight,
+            );
+
+          const deadbandedMetricLandmarks =
+            pointDeadband.applyMetric(
+              deformationEstimate.metricLandmarks,
+              pixelsPerMetricUnit,
+            );
+
+          for (
+            const geometry of
+            controller.customFaceGeometries
+          ) {
+            geometry.updatePositions(
+              deadbandedMetricLandmarks,
+            );
+          }
+
+          const appliedEstimate = {
+            faceScale:
+              deformationEstimate.faceScale,
+            faceMatrix:
+              Array.from(
+                deformationEstimate.faceMatrix,
+              ),
+            metricLandmarks:
+              flattenNumericLandmarks(
+                deadbandedMetricLandmarks,
+              ),
+          };
+
+          // Keep existing gate statistics for diagnostics and convergence, but
+          // its accept/hold result no longer decides whether geometry updates.
           const gateResult =
             globalGate.evaluate(
-              deadbandedLandmarks,
+              smoothedLandmarks,
               video.videoWidth,
               video.videoHeight,
               now,
             );
-
-          let appliedEstimate:
-            | {
-                faceScale: number;
-                faceMatrix: number[];
-                metricLandmarks: number[];
-              }
-            | null = null;
-
-          if (gateResult.accepted) {
-            // Geometry remains stabilized. Use the gate-approved smoothed
-            // landmarks for deformation while the pose matrix keeps following
-            // RAW landmarks independently.
-            const deformationEstimate =
-              controller.estimator.estimate(
-                gateResult.points,
-              );
-
-            deformationEstimate.blendshapes =
-              results.faceBlendshapes?.[0];
-
-            for (
-              const geometry of
-              controller.customFaceGeometries
-            ) {
-              geometry.updatePositions(
-                deformationEstimate.metricLandmarks,
-              );
-            }
-
-            appliedEstimate = {
-              faceScale:
-                deformationEstimate.faceScale,
-              faceMatrix:
-                Array.from(
-                  deformationEstimate.faceMatrix,
-                ),
-              metricLandmarks:
-                flattenNumericLandmarks(
-                  deformationEstimate.metricLandmarks,
-                ),
-            };
-          }
 
           if (gateResult.evaluated) {
             if (gateResult.tuning.changed) {
@@ -2007,9 +2097,13 @@ export async function createMaskedCameraStream(
                   flattenNumericLandmarks(
                     smoothedLandmarks,
                   ),
-                deadbandedNormalized:
+                deformationMetric:
                   flattenNumericLandmarks(
-                    deadbandedLandmarks,
+                    deformationEstimate.metricLandmarks,
+                  ),
+                deadbandedMetric:
+                  flattenNumericLandmarks(
+                    deadbandedMetricLandmarks,
                   ),
                 pointDeadband: {
                   thresholdPx:
@@ -2017,7 +2111,10 @@ export async function createMaskedCameraStream(
                   heldCount:
                     pointDeadband.getHeldCount(),
                   totalPoints:
-                    deadbandedLandmarks.length,
+                    deadbandedMetricLandmarks.length,
+                  pixelsPerMetricUnit,
+                  stage:
+                    'post-estimator-metric',
                 },
                 gate: {
                   ...globalGate.getStatus(),

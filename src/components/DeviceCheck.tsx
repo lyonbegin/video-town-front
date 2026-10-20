@@ -412,8 +412,8 @@ export default function DeviceCheck({
               </label>
 
               <p className="muted-text">
-                0px이면 개별 점 deadband를 사실상 끕니다. 10px까지 실시간으로 변경되며
-                값을 바꾸는 즉시 현재 복면 메쉬에 적용됩니다.
+                estimator가 계산한 실제 3D metric landmark에 직접 적용됩니다.
+                0px이면 개별 점 deadband를 끄고, 10px까지 실시간 변경 즉시 geometry에 반영됩니다.
               </p>
 
               <label>
