@@ -166,7 +166,7 @@ const THREE_SPECIFIER = 'three';
 const FACE_TEXTURE_URL =
   'https://cdn.jsdelivr.net/gh/hiukim/mind-ar-js@1.2.5/examples/face-tracking/assets/sparkar/face-mask.png';
 
-const FACE_LOSS_GRACE_MS = 420;
+const FACE_LOSS_GRACE_MS = 120;
 const CALIBRATION_STORAGE_KEY =
   'video-town-mask-calibration-v1';
 
@@ -260,6 +260,16 @@ const VELOCITY_FILTER_WINDOW_SIZE = 5;
 const VELOCITY_FILTER_SCALE = 20.0;
 const ASSUMED_FRAME_MS = 1000 / 30;
 
+function numericDetectedLandmarks(
+  landmarks: NormalizedLandmark[],
+) {
+  return landmarks.map((point) => [
+    point.x,
+    point.y,
+    point.z,
+  ]);
+}
+
 function flattenDetectedLandmarks(
   landmarks: NormalizedLandmark[],
 ) {
@@ -330,8 +340,9 @@ function copyFaceMatrix(
  * - high velocity => high alpha => follow quickly
  * - low velocity => low alpha => stabilize
  *
- * This is intentionally used BEFORE MindAR's Estimator, so the same smoothed
- * landmarks produce both the face pose matrix and the deforming face geometry.
+ * This filter is used only for deformation stabilization and calibration.
+ * Head pose uses RAW detected landmarks so translation/rotation can follow
+ * every successful detector frame without smoothing lag.
  */
 class RelativeVelocityFilter {
   private lastValue = 0;
@@ -808,11 +819,11 @@ export async function createMaskedCameraStream(
     // MindAR's built-in loop never started. Our custom path deliberately
     // separates HEAD POSE from FACE DEFORMATION:
     //
-    // detect -> RelativeVelocity -> estimator -> faceMatrix EVERY tracking frame
-    //                              -> deformation gate -> geometry only on accept
+    // detect -> RAW landmarks -> estimator -> faceMatrix EVERY tracking frame
+    //        \-> RelativeVelocity -> deformation gate -> geometry only on accept
     //
-    // The stabilizer must never hold the head pose. Otherwise the mask can stay
-    // at an old screen position while the real face has already moved.
+    // Head pose bypasses both smoothing and the gate. The stabilizer therefore
+    // cannot leave the whole mask at an old screen position.
 
     const smoother =
       new FaceLandmarksSmoother();
@@ -957,9 +968,9 @@ export async function createMaskedCameraStream(
             now - lastSeenAt <=
               FACE_LOSS_GRACE_MS
           ) {
-            // Preserve smoothing/deadband state through short detector misses.
-            // Resetting it here made every reacquired frame jump to a fresh
-            // baseline and masked the effect of the threshold slider.
+            // Keep only a very short grace window for one/two transient misses.
+            // Long stale-mask display is worse than hiding briefly because the
+            // face may already be at a completely different screen position.
             faceMesh.visible = true;
           } else if (everSeenFace) {
             smoother.reset();
@@ -967,6 +978,11 @@ export async function createMaskedCameraStream(
             faceMesh.visible = false;
           }
         } else {
+          const rawLandmarks =
+            numericDetectedLandmarks(
+              results.faceLandmarks[0],
+            );
+
           const smoothedLandmarks =
             smoother.smooth(
               results.faceLandmarks[0],
@@ -975,12 +991,12 @@ export async function createMaskedCameraStream(
               video.videoHeight,
             );
 
-          // Restore the original fast-follow behavior for the mask pose.
-          // The estimator and MindAR onUpdate run on EVERY successful tracking
-          // frame, so faceMatrix follows translation/rotation immediately.
+          // Head pose uses RAW landmarks and updates on EVERY successful
+          // detector frame. This removes RelativeVelocity lag from
+          // translation/rotation.
           const livePoseEstimate =
             controller.estimator.estimate(
-              smoothedLandmarks,
+              rawLandmarks,
             );
 
           livePoseEstimate.blendshapes =
@@ -1014,25 +1030,36 @@ export async function createMaskedCameraStream(
             | null = null;
 
           if (gateResult.accepted) {
+            // Geometry remains stabilized. Use the gate-approved smoothed
+            // landmarks for deformation while the pose matrix keeps following
+            // RAW landmarks independently.
+            const deformationEstimate =
+              controller.estimator.estimate(
+                gateResult.points,
+              );
+
+            deformationEstimate.blendshapes =
+              results.faceBlendshapes?.[0];
+
             for (
               const geometry of
               controller.customFaceGeometries
             ) {
               geometry.updatePositions(
-                livePoseEstimate.metricLandmarks,
+                deformationEstimate.metricLandmarks,
               );
             }
 
             appliedEstimate = {
               faceScale:
-                livePoseEstimate.faceScale,
+                deformationEstimate.faceScale,
               faceMatrix:
                 Array.from(
-                  livePoseEstimate.faceMatrix,
+                  deformationEstimate.faceMatrix,
                 ),
               metricLandmarks:
                 flattenNumericLandmarks(
-                  livePoseEstimate.metricLandmarks,
+                  deformationEstimate.metricLandmarks,
                 ),
             };
           }
@@ -1070,6 +1097,10 @@ export async function createMaskedCameraStream(
                 rawNormalized:
                   flattenDetectedLandmarks(
                     results.faceLandmarks[0],
+                  ),
+                rawPoseInput:
+                  flattenNumericLandmarks(
+                    rawLandmarks,
                   ),
                 smoothedNormalized:
                   flattenNumericLandmarks(
