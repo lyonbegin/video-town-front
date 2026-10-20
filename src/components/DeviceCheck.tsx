@@ -1,10 +1,9 @@
 ﻿import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   createMaskedCameraStream,
-  DEFAULT_MASK_TUNING,
-  type AdaptiveFilterStatus,
   type CameraMode,
   type MaskedCameraController,
+  type TrackingStatus,
 } from '../mask/MaskedCamera';
 
 interface Props {
@@ -32,8 +31,8 @@ export default function DeviceCheck({
   const [micId, setMicId] = useState('');
   const [level, setLevel] = useState(0);
   const [cameraMode, setCameraMode] = useState<CameraMode>('mask');
-  const [adaptiveStatus, setAdaptiveStatus] =
-    useState<AdaptiveFilterStatus | null>(null);
+  const [trackingStatus, setTrackingStatus] =
+    useState<TrackingStatus | null>(null);
 
   useEffect(() => {
     if (previewRef.current) {
@@ -85,7 +84,7 @@ export default function DeviceCheck({
 
   useEffect(() => {
     if (cameraMode !== 'mask' || !stream) {
-      setAdaptiveStatus(null);
+      setTrackingStatus(null);
       return;
     }
 
@@ -93,11 +92,11 @@ export default function DeviceCheck({
       const controller = maskControllerRef.current;
 
       if (!controller) {
-        setAdaptiveStatus(null);
+        setTrackingStatus(null);
         return;
       }
 
-      setAdaptiveStatus(controller.getAdaptiveStatus());
+      setTrackingStatus(controller.getTrackingStatus());
     };
 
     update();
@@ -123,7 +122,7 @@ export default function DeviceCheck({
   ) {
     setBusy(true);
     setError('');
-    setAdaptiveStatus(null);
+    setTrackingStatus(null);
 
     try {
       maskControllerRef.current?.stop();
@@ -161,14 +160,11 @@ export default function DeviceCheck({
 
       if (nextMode === 'mask') {
         try {
-          const controller = await createMaskedCameraStream(
-            raw,
-            DEFAULT_MASK_TUNING,
-          );
+          const controller = await createMaskedCameraStream(raw);
 
           maskControllerRef.current = controller;
           outgoing = controller.stream;
-          setAdaptiveStatus(controller.getAdaptiveStatus());
+          setTrackingStatus(controller.getTrackingStatus());
         } catch (maskError) {
           raw.getTracks().forEach((track) => track.stop());
           throw maskError;
@@ -340,114 +336,39 @@ export default function DeviceCheck({
           {cameraMode === 'mask' && (
             <>
               <div className="section-kicker">
-                자동 적응형 마스크 추적
+                얼굴 메쉬 안정화
               </div>
 
               <p className="muted-text">
-                카메라 시작 직후 약 2초 동안 현재 카메라 노이즈와
-                처리 속도를 측정하고, 이후에도 프레임마다 얼굴 움직임과
-                지터를 감시하면서 MindAR One Euro의 minCutOff와 beta를
-                계속 자동 조정합니다. 별도의 두 번째 보간 필터는 없습니다.
+                MediaPipe Face Effect 방식과 같은 Relative Velocity smoothing을
+                얼굴 landmark 단계에 먼저 적용한 뒤, 그 동일한 좌표로
+                MindAR의 pose와 face geometry를 함께 계산합니다.
               </p>
 
               <div className="preview-badge">
-                {adaptiveStatus?.phase === 'adaptive'
-                  ? '자동 최적화 진행 중'
-                  : '초기 자동 측정 중'}
+                Relative Velocity · window 5 · velocity scale 20
               </div>
 
               <div className="device-grid">
-                <label>
-                  <span>현재 minCutOff</span>
-                  <input
-                    readOnly
-                    value={
-                      adaptiveStatus
-                        ? adaptiveStatus.minCutoff.toFixed(6)
-                        : '-'
-                    }
-                  />
-                </label>
-
-                <label>
-                  <span>현재 beta</span>
-                  <input
-                    readOnly
-                    value={
-                      adaptiveStatus
-                        ? adaptiveStatus.beta.toFixed(3)
-                        : '-'
-                    }
-                  />
-                </label>
-
                 <label>
                   <span>추적 FPS</span>
                   <input
                     readOnly
                     value={
-                      adaptiveStatus
-                        ? adaptiveStatus.fps.toFixed(1)
+                      trackingStatus
+                        ? trackingStatus.fps.toFixed(1)
                         : '-'
                     }
                   />
                 </label>
 
                 <label>
-                  <span>프레임 간격(ms)</span>
+                  <span>추적 프레임 간격(ms)</span>
                   <input
                     readOnly
                     value={
-                      adaptiveStatus
-                        ? adaptiveStatus.frameIntervalMs.toFixed(1)
-                        : '-'
-                    }
-                  />
-                </label>
-
-                <label>
-                  <span>카메라 노이즈</span>
-                  <input
-                    readOnly
-                    value={
-                      adaptiveStatus
-                        ? adaptiveStatus.noiseFloor.toFixed(6)
-                        : '-'
-                    }
-                  />
-                </label>
-
-                <label>
-                  <span>정지 지터</span>
-                  <input
-                    readOnly
-                    value={
-                      adaptiveStatus
-                        ? adaptiveStatus.stationaryJitter.toFixed(6)
-                        : '-'
-                    }
-                  />
-                </label>
-
-                <label>
-                  <span>추적 오차</span>
-                  <input
-                    readOnly
-                    value={
-                      adaptiveStatus
-                        ? adaptiveStatus.trackingError.toFixed(6)
-                        : '-'
-                    }
-                  />
-                </label>
-
-                <label>
-                  <span>움직임 응답률</span>
-                  <input
-                    readOnly
-                    value={
-                      adaptiveStatus
-                        ? adaptiveStatus.responseRatio.toFixed(3)
+                      trackingStatus
+                        ? trackingStatus.frameIntervalMs.toFixed(1)
                         : '-'
                     }
                   />
