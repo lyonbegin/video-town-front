@@ -377,7 +377,7 @@ export default function DeviceCheck({
               </p>
 
               <div className="preview-badge">
-                adaptive noise floor · rigid motion gate · expression bypass
+                MindAR OneEuro auto-tune · adaptive deformation gate
               </div>
 
               <label>
@@ -467,10 +467,11 @@ export default function DeviceCheck({
               </label>
 
               <p className="muted-text">
-                자동 튜닝은 매 영상통화마다 다시 시작합니다. 이전에 같은 카메라에서
-                수렴한 값이 있으면 그 값을 시작점으로 사용하고, 이번 통화 환경에서 다시
-                미세 조정합니다. 값이 수렴하면 자동 분석과 상세 로그를 즉시 중단하고
-                저장된 고정값만 사용합니다. 표정 변화는 별도 expression threshold로 판정합니다.
+                매 영상통화마다 MindAR 1.2.5의 공식 OneEuro minCutOff/beta를 실제 pose 로그로
+                자동 탐색합니다. 별도 pose 필터를 만들지 않고 MindAR의 faceMatrixFilter와
+                faceScaleFilter 값만 조정합니다. 같은 카메라의 이전 수렴값을 시작점으로 쓰며,
+                OneEuro와 deformation threshold가 모두 수렴하면 분석과 상세 로그를 중단하고
+                저장된 고정값만 사용합니다.
               </p>
 
               <div className="section-kicker">
@@ -601,6 +602,44 @@ export default function DeviceCheck({
                     value={
                       trackingStatus
                         ? `${trackingStatus.rigidSignalPx.toFixed(2)} px`
+                        : '-'
+                    }
+                  />
+                </label>
+
+                <label>
+                  <span>MindAR OneEuro minCutOff</span>
+                  <input
+                    readOnly
+                    value={
+                      trackingStatus
+                        ? trackingStatus.oneEuroMinCutOff.toFixed(5)
+                        : '-'
+                    }
+                  />
+                </label>
+
+                <label>
+                  <span>MindAR OneEuro beta</span>
+                  <input
+                    readOnly
+                    value={
+                      trackingStatus
+                        ? trackingStatus.oneEuroBeta.toFixed(2)
+                        : '-'
+                    }
+                  />
+                </label>
+
+                <label>
+                  <span>OneEuro 수렴 진행</span>
+                  <input
+                    readOnly
+                    value={
+                      trackingStatus
+                        ? trackingStatus.oneEuroConverged
+                          ? '100% / 고정값 사용'
+                          : `${(trackingStatus.oneEuroConvergenceProgress * 100).toFixed(0)}%`
                         : '-'
                     }
                   />

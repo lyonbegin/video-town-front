@@ -34,6 +34,11 @@ export interface TrackingStatus {
   autoTuneConfidence: number;
   calibrationConverged: boolean;
   convergenceProgress: number;
+  oneEuroMinCutOff: number;
+  oneEuroBeta: number;
+  oneEuroConverged: boolean;
+  oneEuroConvergenceProgress: number;
+  oneEuroScore: number;
   calibrationSeedSource: 'saved' | 'default';
   staticAcceptRate: number;
   outputUpdateRate: number;
@@ -43,6 +48,12 @@ export interface TrackingStatus {
 export const DEFAULT_GLOBAL_THRESHOLD_PX = 3.0;
 export const DEFAULT_EXPRESSION_THRESHOLD_PX = 1.5;
 export const DEFAULT_GATE_VERIFICATION_HZ = 15;
+
+// Seed selected by replaying the uploaded real session through MindAR 1.2.5's
+// exact OneEuro equation. Runtime tuning below keeps using MindAR's filter;
+// it only searches minCutOff/beta.
+const DEFAULT_ONE_EURO_MIN_CUTOFF = 0.0004;
+const DEFAULT_ONE_EURO_BETA = 4.0;
 
 export interface MaskedCameraController {
   stream: MediaStream;
@@ -87,6 +98,8 @@ type EstimatorLike = {
 };
 
 type OneEuroVectorFilterLike = {
+  minCutOff: number;
+  beta: number;
   filter: (
     timestampMs: number,
     values: number[],
@@ -184,6 +197,8 @@ type SavedMaskCalibration = {
   thresholdPx: number;
   expressionThresholdPx: number;
   verificationHz: number;
+  oneEuroMinCutOff?: number;
+  oneEuroBeta?: number;
   updatedAt: string;
 };
 
@@ -263,6 +278,612 @@ function saveCalibration(
     // Calibration persistence must never interrupt video.
   }
 }
+
+
+type OneEuroPoseSample = {
+  timestampMs: number;
+  faceMatrix: number[];
+};
+
+type OneEuroTunerStatus = {
+  minCutOff: number;
+  beta: number;
+  converged: boolean;
+  progress: number;
+  score: number;
+  sampleCount: number;
+};
+
+type OneEuroTuneUpdate = {
+  changed: boolean;
+  minCutOff: number;
+  beta: number;
+  converged: boolean;
+  progress: number;
+  score: number;
+  staticJitterRatio: number;
+  motionErrorRatio: number;
+};
+
+const ONE_EURO_MIN_CUTOFF_CANDIDATES = [
+  0.00015,
+  0.0002,
+  0.0003,
+  0.0004,
+  0.0005,
+  0.0007,
+  0.001,
+] as const;
+
+const ONE_EURO_BETA_CANDIDATES = [
+  2,
+  3,
+  4,
+  5,
+  6,
+  8,
+] as const;
+
+const ONE_EURO_TUNE_WINDOW = 36;
+const ONE_EURO_TUNE_MIN_SAMPLES = 24;
+const ONE_EURO_TUNE_EVERY = 8;
+const ONE_EURO_STABLE_SEARCHES = 3;
+const ONE_EURO_DERIVATIVE_CUTOFF = 0.001;
+
+function quantileNumber(
+  values: number[],
+  q: number,
+) {
+  if (values.length === 0) return 0;
+
+  const sorted = [...values].sort(
+    (a, b) => a - b,
+  );
+
+  const position =
+    Math.max(
+      0,
+      Math.min(1, q),
+    ) *
+    (sorted.length - 1);
+
+  const lower =
+    Math.floor(position);
+
+  const upper =
+    Math.ceil(position);
+
+  if (lower === upper) {
+    return sorted[lower];
+  }
+
+  const fraction =
+    position - lower;
+
+  return (
+    sorted[lower] *
+      (1 - fraction) +
+    sorted[upper] *
+      fraction
+  );
+}
+
+function medianNumber(
+  values: number[],
+) {
+  return quantileNumber(
+    values,
+    0.5,
+  );
+}
+
+function vectorDistanceNormalized(
+  a: number[],
+  b: number[],
+  scales: number[],
+) {
+  let sum = 0;
+  let count = 0;
+
+  for (
+    let i = 0;
+    i < a.length;
+    i++
+  ) {
+    const scale =
+      Math.max(
+        0.0001,
+        scales[i] ?? 0.0001,
+      );
+
+    const delta =
+      ((a[i] ?? 0) -
+        (b[i] ?? 0)) /
+      scale;
+
+    sum += delta * delta;
+    count++;
+  }
+
+  return Math.sqrt(
+    sum / Math.max(1, count),
+  );
+}
+
+// Exact MindAR 1.2.5 OneEuro math, used only as a shadow evaluator for
+// parameter selection. The live output itself always uses controller's
+// official faceMatrixFilter/faceScaleFilter.
+function replayMindAROneEuro(
+  samples: OneEuroPoseSample[],
+  minCutOff: number,
+  beta: number,
+) {
+  const output: number[][] = [];
+  let xPrev: number[] | null = null;
+  let dxPrev: number[] | null = null;
+  let tPrev: number | null = null;
+
+  for (const sample of samples) {
+    const x =
+      sample.faceMatrix;
+
+    if (
+      xPrev === null ||
+      dxPrev === null ||
+      tPrev === null
+    ) {
+      const first = [...x];
+      output.push(first);
+      xPrev = first;
+      dxPrev =
+        x.map(() => 0);
+      tPrev =
+        sample.timestampMs;
+      continue;
+    }
+
+    const te =
+      Math.max(
+        0.001,
+        sample.timestampMs -
+          tPrev,
+      );
+
+    const derivativeR =
+      2 *
+      Math.PI *
+      ONE_EURO_DERIVATIVE_CUTOFF *
+      te;
+
+    const derivativeAlpha =
+      derivativeR /
+      (derivativeR + 1);
+
+    const xHat =
+      new Array<number>(
+        x.length,
+      );
+
+    const nextDx =
+      new Array<number>(
+        x.length,
+      );
+
+    for (
+      let i = 0;
+      i < x.length;
+      i++
+    ) {
+      const dx =
+        ((x[i] ?? 0) -
+          (xPrev[i] ?? 0)) /
+        te;
+
+      const dxHat =
+        derivativeAlpha * dx +
+        (1 - derivativeAlpha) *
+          (dxPrev[i] ?? 0);
+
+      const cutoff =
+        minCutOff +
+        beta *
+          Math.abs(dxHat);
+
+      const r =
+        2 *
+        Math.PI *
+        cutoff *
+        te;
+
+      const alpha =
+        r / (r + 1);
+
+      xHat[i] =
+        alpha * (x[i] ?? 0) +
+        (1 - alpha) *
+          (xPrev[i] ?? 0);
+
+      nextDx[i] = dxHat;
+    }
+
+    output.push(xHat);
+    xPrev = xHat;
+    dxPrev = nextDx;
+    tPrev =
+      sample.timestampMs;
+  }
+
+  return output;
+}
+
+class MindAROneEuroParameterTuner {
+  private samples:
+    OneEuroPoseSample[] = [];
+  private sinceLastSearch = 0;
+  private stableSearches = 0;
+  private lastBestKey = '';
+  private status:
+    OneEuroTunerStatus;
+
+  constructor(
+    initialMinCutOff: number,
+    initialBeta: number,
+  ) {
+    this.status = {
+      minCutOff:
+        initialMinCutOff,
+      beta:
+        initialBeta,
+      converged: false,
+      progress: 0,
+      score:
+        Number.POSITIVE_INFINITY,
+      sampleCount: 0,
+    };
+  }
+
+  resetWindow() {
+    if (
+      this.status.converged
+    ) {
+      return;
+    }
+
+    this.samples = [];
+    this.sinceLastSearch = 0;
+    this.stableSearches = 0;
+    this.lastBestKey = '';
+    this.status = {
+      ...this.status,
+      progress: 0,
+      sampleCount: 0,
+    };
+  }
+
+  getStatus():
+    OneEuroTunerStatus {
+    return {
+      ...this.status,
+    };
+  }
+
+  addSample(
+    timestampMs: number,
+    faceMatrix: number[],
+  ): OneEuroTuneUpdate | null {
+    if (
+      this.status.converged
+    ) {
+      return null;
+    }
+
+    this.samples.push({
+      timestampMs,
+      faceMatrix:
+        [...faceMatrix],
+    });
+
+    if (
+      this.samples.length >
+      ONE_EURO_TUNE_WINDOW
+    ) {
+      this.samples.shift();
+    }
+
+    this.sinceLastSearch++;
+
+    this.status.sampleCount =
+      this.samples.length;
+
+    const sampleProgress =
+      Math.min(
+        1,
+        this.samples.length /
+          ONE_EURO_TUNE_MIN_SAMPLES,
+      );
+
+    this.status.progress =
+      Math.max(
+        this.status.progress,
+        sampleProgress * 0.7,
+      );
+
+    if (
+      this.samples.length <
+        ONE_EURO_TUNE_MIN_SAMPLES ||
+      this.sinceLastSearch <
+        ONE_EURO_TUNE_EVERY
+    ) {
+      return null;
+    }
+
+    this.sinceLastSearch = 0;
+
+    const rawDiffs: number[][] =
+      [];
+
+    for (
+      let i = 1;
+      i < this.samples.length;
+      i++
+    ) {
+      const current =
+        this.samples[i]
+          .faceMatrix;
+
+      const previous =
+        this.samples[i - 1]
+          .faceMatrix;
+
+      rawDiffs.push(
+        current.map(
+          (value, index) =>
+            value -
+            (previous[index] ?? 0),
+        ),
+      );
+    }
+
+    const componentScales =
+      this.samples[0]
+        .faceMatrix
+        .map((_, component) =>
+          Math.max(
+            0.0001,
+            quantileNumber(
+              rawDiffs.map(
+                (diff) =>
+                  Math.abs(
+                    diff[component] ??
+                      0,
+                  ),
+              ),
+              0.75,
+            ),
+          ),
+        );
+
+    const rawDeltaNorms =
+      rawDiffs.map(
+        (diff) =>
+          vectorDistanceNormalized(
+            diff,
+            diff.map(() => 0),
+            componentScales,
+          ),
+      );
+
+    const staticBoundary =
+      quantileNumber(
+        rawDeltaNorms,
+        0.35,
+      );
+
+    const motionBoundary =
+      quantileNumber(
+        rawDeltaNorms,
+        0.65,
+      );
+
+    const rawStaticMedian =
+      Math.max(
+        0.0001,
+        medianNumber(
+          rawDeltaNorms.filter(
+            (value) =>
+              value <=
+              staticBoundary,
+          ),
+        ),
+      );
+
+    const rawMotionMedian =
+      Math.max(
+        0.0001,
+        medianNumber(
+          rawDeltaNorms.filter(
+            (value) =>
+              value >=
+              motionBoundary,
+          ),
+        ),
+      );
+
+    let best:
+      OneEuroTuneUpdate | null =
+        null;
+
+    for (
+      const minCutOff of
+      ONE_EURO_MIN_CUTOFF_CANDIDATES
+    ) {
+      for (
+        const beta of
+        ONE_EURO_BETA_CANDIDATES
+      ) {
+        const filtered =
+          replayMindAROneEuro(
+            this.samples,
+            minCutOff,
+            beta,
+          );
+
+        const filteredDeltaNorms:
+          number[] = [];
+
+        const motionErrors:
+          number[] = [];
+
+        for (
+          let i = 1;
+          i < filtered.length;
+          i++
+        ) {
+          filteredDeltaNorms.push(
+            vectorDistanceNormalized(
+              filtered[i],
+              filtered[i - 1],
+              componentScales,
+            ),
+          );
+
+          if (
+            rawDeltaNorms[i - 1] >=
+            motionBoundary
+          ) {
+            motionErrors.push(
+              vectorDistanceNormalized(
+                filtered[i],
+                this.samples[i]
+                  .faceMatrix,
+                componentScales,
+              ),
+            );
+          }
+        }
+
+        const staticJitter =
+          medianNumber(
+            filteredDeltaNorms.filter(
+              (_, index) =>
+                rawDeltaNorms[index] <=
+                staticBoundary,
+            ),
+          );
+
+        const motionError =
+          medianNumber(
+            motionErrors,
+          );
+
+        const staticJitterRatio =
+          staticJitter /
+          rawStaticMedian;
+
+        const motionErrorRatio =
+          motionError /
+          rawMotionMedian;
+
+        // Jitter is weighted slightly higher because the current failure mode
+        // is visible eye-straining shake; responsiveness remains a hard part
+        // of the score so an over-smoothed candidate cannot win.
+        const score =
+          0.55 *
+            staticJitterRatio +
+          0.45 *
+            motionErrorRatio;
+
+        if (
+          best === null ||
+          score < best.score
+        ) {
+          best = {
+            changed: false,
+            minCutOff,
+            beta,
+            converged: false,
+            progress:
+              this.status.progress,
+            score,
+            staticJitterRatio,
+            motionErrorRatio,
+          };
+        }
+      }
+    }
+
+    if (!best) {
+      return null;
+    }
+
+    const bestKey =
+      `${best.minCutOff}:${best.beta}`;
+
+    if (
+      bestKey ===
+      this.lastBestKey
+    ) {
+      this.stableSearches++;
+    } else {
+      this.lastBestKey =
+        bestKey;
+      this.stableSearches = 1;
+    }
+
+    const changed =
+      Math.abs(
+        best.minCutOff -
+          this.status.minCutOff,
+      ) >
+        1e-9 ||
+      Math.abs(
+        best.beta -
+          this.status.beta,
+      ) >
+        1e-9;
+
+    this.status.minCutOff =
+      best.minCutOff;
+
+    this.status.beta =
+      best.beta;
+
+    this.status.score =
+      best.score;
+
+    this.status.progress =
+      Math.max(
+        0.7,
+        Math.min(
+          1,
+          0.7 +
+            0.3 *
+              (
+                this.stableSearches /
+                ONE_EURO_STABLE_SEARCHES
+              ),
+        ),
+      );
+
+    if (
+      this.stableSearches >=
+      ONE_EURO_STABLE_SEARCHES
+    ) {
+      this.status.converged = true;
+      this.status.progress = 1;
+    }
+
+    return {
+      ...best,
+      changed,
+      converged:
+        this.status.converged,
+      progress:
+        this.status.progress,
+    };
+  }
+}
+
 
 // Exact Face Effect smoothing parameters used by MediaPipe's
 // face_landmarks_smoothing.pbtxt.
@@ -772,6 +1393,41 @@ export async function createMaskedCameraStream(
         ?.verificationHz ??
       DEFAULT_GATE_VERIFICATION_HZ;
 
+    const initialOneEuroMinCutOff =
+      Number.isFinite(
+        savedCalibration
+          ?.oneEuroMinCutOff,
+      )
+        ? savedCalibration!
+            .oneEuroMinCutOff!
+        : DEFAULT_ONE_EURO_MIN_CUTOFF;
+
+    const initialOneEuroBeta =
+      Number.isFinite(
+        savedCalibration
+          ?.oneEuroBeta,
+      )
+        ? savedCalibration!
+            .oneEuroBeta!
+        : DEFAULT_ONE_EURO_BETA;
+
+    controller.faceMatrixFilter.minCutOff =
+      initialOneEuroMinCutOff;
+    controller.faceMatrixFilter.beta =
+      initialOneEuroBeta;
+    controller.faceScaleFilter.minCutOff =
+      initialOneEuroMinCutOff;
+    controller.faceScaleFilter.beta =
+      initialOneEuroBeta;
+    controller.faceMatrixFilter.reset();
+    controller.faceScaleFilter.reset();
+
+    const oneEuroTuner =
+      new MindAROneEuroParameterTuner(
+        initialOneEuroMinCutOff,
+        initialOneEuroBeta,
+      );
+
     const calibrationSeedSource:
       'saved' | 'default' =
         savedCalibration
@@ -801,6 +1457,21 @@ export async function createMaskedCameraStream(
             VELOCITY_FILTER_WINDOW_SIZE,
           velocityScale:
             VELOCITY_FILTER_SCALE,
+        },
+        oneEuro: {
+          filter:
+            'MindAR 1.2.5 OneEuro',
+          minCutOff:
+            initialOneEuroMinCutOff,
+          beta:
+            initialOneEuroBeta,
+          seed:
+            savedCalibration
+              ?.oneEuroMinCutOff !==
+              undefined
+              ? 'saved'
+              : 'log-replay-default',
+          autoTune: true,
         },
         gate: {
           thresholdPx:
@@ -990,6 +1661,7 @@ export async function createMaskedCameraStream(
             globalGate.reset();
             controller.faceMatrixFilter.reset();
             controller.faceScaleFilter.reset();
+            oneEuroTuner.resetWindow();
             faceMesh.visible = false;
           }
         } else {
@@ -1016,6 +1688,37 @@ export async function createMaskedCameraStream(
 
           const poseFilterTimestamp =
             Date.now();
+
+          const oneEuroTune =
+            oneEuroTuner.addSample(
+              poseFilterTimestamp,
+              rawPoseEstimate.faceMatrix,
+            );
+
+          if (oneEuroTune) {
+            if (
+              oneEuroTune.changed
+            ) {
+              controller.faceMatrixFilter.minCutOff =
+                oneEuroTune.minCutOff;
+              controller.faceMatrixFilter.beta =
+                oneEuroTune.beta;
+              controller.faceScaleFilter.minCutOff =
+                oneEuroTune.minCutOff;
+              controller.faceScaleFilter.beta =
+                oneEuroTune.beta;
+            }
+
+            debugLogger?.log(
+              'one_euro_tune',
+              {
+                frameIndex:
+                  trackingFrameIndex,
+                ...oneEuroTune,
+              },
+              now,
+            );
+          }
 
           const filteredFaceMatrix =
             controller.faceMatrixFilter.filter(
@@ -1186,6 +1889,8 @@ export async function createMaskedCameraStream(
                           ),
                       }
                     : null,
+                oneEuro:
+                  oneEuroTuner.getStatus(),
                 renderedFaceMatrix:
                   copyFaceMatrix(
                     faceMesh,
@@ -1197,9 +1902,13 @@ export async function createMaskedCameraStream(
             const convergedStatus =
               globalGate.getStatus();
 
+            const oneEuroStatus =
+              oneEuroTuner.getStatus();
+
             if (
               convergedStatus
                 .calibrationConverged &&
+              oneEuroStatus.converged &&
               !calibrationFinalized
             ) {
               calibrationFinalized = true;
@@ -1217,6 +1926,11 @@ export async function createMaskedCameraStream(
                 verificationHz:
                   convergedStatus
                     .verificationHz,
+                oneEuroMinCutOff:
+                  oneEuroStatus
+                    .minCutOff,
+                oneEuroBeta:
+                  oneEuroStatus.beta,
                 updatedAt: savedAt,
               };
 
@@ -1235,6 +1949,8 @@ export async function createMaskedCameraStream(
                   calibration,
                   trackingStatus:
                     convergedStatus,
+                  oneEuro:
+                    oneEuroStatus,
                 },
                 now,
               );
@@ -1421,9 +2137,23 @@ export async function createMaskedCameraStream(
         autoTuneConfidence:
           globalGate.getStatus().autoTuneConfidence,
         calibrationConverged:
-          globalGate.getStatus().calibrationConverged,
+          globalGate.getStatus().calibrationConverged &&
+          oneEuroTuner.getStatus().converged,
         convergenceProgress:
-          globalGate.getStatus().convergenceProgress,
+          Math.min(
+            globalGate.getStatus().convergenceProgress,
+            oneEuroTuner.getStatus().progress,
+          ),
+        oneEuroMinCutOff:
+          oneEuroTuner.getStatus().minCutOff,
+        oneEuroBeta:
+          oneEuroTuner.getStatus().beta,
+        oneEuroConverged:
+          oneEuroTuner.getStatus().converged,
+        oneEuroConvergenceProgress:
+          oneEuroTuner.getStatus().progress,
+        oneEuroScore:
+          oneEuroTuner.getStatus().score,
         calibrationSeedSource,
         staticAcceptRate:
           globalGate.getStatus().staticAcceptRate,
