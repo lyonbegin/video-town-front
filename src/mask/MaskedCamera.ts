@@ -86,11 +86,21 @@ type EstimatorLike = {
   estimate: (landmarks: number[][]) => MindAREstimate;
 };
 
+type OneEuroVectorFilterLike = {
+  filter: (
+    timestampMs: number,
+    values: number[],
+  ) => number[];
+  reset: () => void;
+};
+
 type MindARController = {
   processingVideo?: boolean;
   flipFace: boolean;
   faceMeshHelper: FaceMeshHelperLike;
   estimator: EstimatorLike;
+  faceMatrixFilter: OneEuroVectorFilterLike;
+  faceScaleFilter: OneEuroVectorFilterLike;
   customFaceGeometries: FaceGeometryLike[];
   lastEstimateResult: MindAREstimate | null;
   onUpdate: (payload: {
@@ -681,9 +691,10 @@ export async function createMaskedCameraStream(
     const { MindARThree, THREE } =
       await loadOfficialMindARModules();
 
-    // MindAR's original post-estimator One Euro stage is not used for the
-    // custom tracking loop below. We keep the official MindAR module for
-    // camera setup, detector, estimator, geometry, matrices and rendering.
+    // We keep MindAR's own post-estimator One Euro filters for faceMatrix and
+    // faceScale. The custom loop below bypasses MindAR processVideo(), but uses
+    // the exact official filters so pose jitter is suppressed without putting
+    // the 468-landmark deformation smoother in the head-pose path.
     const mindar = new MindARThree({
       container,
       userDeviceId: deviceId,
@@ -819,11 +830,13 @@ export async function createMaskedCameraStream(
     // MindAR's built-in loop never started. Our custom path deliberately
     // separates HEAD POSE from FACE DEFORMATION:
     //
-    // detect -> RAW landmarks -> estimator -> faceMatrix EVERY tracking frame
+    // detect -> RAW landmarks -> estimator -> MindAR OneEuro(faceMatrix/scale)
+    //                                      -> pose EVERY tracking frame
     //        \-> RelativeVelocity -> deformation gate -> geometry only on accept
     //
-    // Head pose bypasses both smoothing and the gate. The stabilizer therefore
-    // cannot leave the whole mask at an old screen position.
+    // Pose never waits for the deformation gate, but it is no longer raw/noisy:
+    // the official MindAR OneEuro filter removes low-speed jitter and raises its
+    // cutoff automatically when movement speed increases.
 
     const smoother =
       new FaceLandmarksSmoother();
@@ -975,6 +988,8 @@ export async function createMaskedCameraStream(
           } else if (everSeenFace) {
             smoother.reset();
             globalGate.reset();
+            controller.faceMatrixFilter.reset();
+            controller.faceScaleFilter.reset();
             faceMesh.visible = false;
           }
         } else {
@@ -991,16 +1006,40 @@ export async function createMaskedCameraStream(
               video.videoHeight,
             );
 
-          // Head pose uses RAW landmarks and updates on EVERY successful
-          // detector frame. This removes RelativeVelocity lag from
-          // translation/rotation.
-          const livePoseEstimate =
+          // Estimate pose from RAW landmarks so the 468-point smoother cannot
+          // introduce head-follow lag. Then run the exact OneEuro filters that
+          // MindAR 1.2.5 normally applies inside Controller.processVideo().
+          const rawPoseEstimate =
             controller.estimator.estimate(
               rawLandmarks,
             );
 
-          livePoseEstimate.blendshapes =
-            results.faceBlendshapes?.[0];
+          const poseFilterTimestamp =
+            Date.now();
+
+          const filteredFaceMatrix =
+            controller.faceMatrixFilter.filter(
+              poseFilterTimestamp,
+              rawPoseEstimate.faceMatrix,
+            );
+
+          const filteredFaceScale =
+            controller.faceScaleFilter.filter(
+              poseFilterTimestamp,
+              [rawPoseEstimate.faceScale],
+            )[0];
+
+          const livePoseEstimate:
+            MindAREstimate = {
+              metricLandmarks:
+                rawPoseEstimate.metricLandmarks,
+              faceMatrix:
+                filteredFaceMatrix,
+              faceScale:
+                filteredFaceScale,
+              blendshapes:
+                results.faceBlendshapes?.[0],
+            };
 
           controller.lastEstimateResult =
             livePoseEstimate;
@@ -1116,6 +1155,14 @@ export async function createMaskedCameraStream(
                     gateResult.tuning,
                 },
                 appliedEstimate,
+                rawPoseEstimate: {
+                  faceScale:
+                    rawPoseEstimate.faceScale,
+                  faceMatrix:
+                    Array.from(
+                      rawPoseEstimate.faceMatrix,
+                    ),
+                },
                 livePoseEstimate: {
                   faceScale:
                     livePoseEstimate.faceScale,
