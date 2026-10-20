@@ -51,13 +51,17 @@ export const DEFAULT_GLOBAL_THRESHOLD_PX = 3.0;
 export const DEFAULT_EXPRESSION_THRESHOLD_PX = 1.5;
 export const DEFAULT_GATE_VERIFICATION_HZ = 15;
 export const MASK_RUNTIME_VERSION =
-  'mask-runtime-20261020-v6';
+  'mask-runtime-20261020-v7';
 
 // Seed selected by replaying the uploaded real session through MindAR 1.2.5's
 // exact OneEuro equation. Runtime tuning below keeps using MindAR's filter;
 // it only searches minCutOff/beta.
-const DEFAULT_ONE_EURO_MIN_CUTOFF = 0.0004;
-const DEFAULT_ONE_EURO_BETA = 4.0;
+export const DEFAULT_ONE_EURO_MIN_CUTOFF = 0.0004;
+export const DEFAULT_ONE_EURO_BETA = 4.0;
+const MIN_ONE_EURO_MIN_CUTOFF = 0.00005;
+const MAX_ONE_EURO_MIN_CUTOFF = 0.02;
+const MIN_ONE_EURO_BETA = 0;
+const MAX_ONE_EURO_BETA = 30;
 
 // Fixed per-landmark 3D deadband for mesh deformation.
 // Pixel-equivalent distance:
@@ -70,6 +74,8 @@ export interface MaskedCameraController {
   stop: () => void;
   setGlobalThresholdPx: (threshold: number) => void;
   setPointDeadbandPx: (threshold: number) => void;
+  setOneEuroMinCutOff: (minCutOff: number) => void;
+  setOneEuroBeta: (beta: number) => void;
   setVerificationHz: (hz: number) => void;
   setAutoTuningEnabled: (enabled: boolean) => void;
   getTrackingStatus: () => TrackingStatus;
@@ -2021,6 +2027,10 @@ export async function createMaskedCameraStream(
         initialOneEuroBeta,
       );
 
+    // Default behavior remains unchanged: the existing OneEuro tuner controls
+    // the live MindAR filters until the user explicitly touches a OneEuro slider.
+    let oneEuroManualOverride = false;
+
     const calibrationSeedSource:
       'saved' | 'default' =
         savedCalibration
@@ -2035,6 +2045,7 @@ export async function createMaskedCameraStream(
         runtimeFeatures: {
           metricLandmarkDeadband: true,
           liveDeadbandSlider: true,
+          liveOneEuroSliders: true,
           pointDeadbandEffectLogging: true,
           loggingContinuesAfterConvergence: true,
           runtimeProbeEndpoint: true,
@@ -2363,7 +2374,8 @@ export async function createMaskedCameraStream(
 
           if (oneEuroTune) {
             if (
-              oneEuroTune.changed
+              oneEuroTune.changed &&
+              !oneEuroManualOverride
             ) {
               controller.faceMatrixFilter.minCutOff =
                 oneEuroTune.minCutOff;
@@ -2381,6 +2393,11 @@ export async function createMaskedCameraStream(
                 frameIndex:
                   trackingFrameIndex,
                 ...oneEuroTune,
+                manualOverride:
+                  oneEuroManualOverride,
+                appliedToLiveFilter:
+                  oneEuroTune.changed &&
+                  !oneEuroManualOverride,
               },
               now,
             );
@@ -2912,9 +2929,9 @@ export async function createMaskedCameraStream(
             oneEuroTuner.getStatus().progress,
           ),
         oneEuroMinCutOff:
-          oneEuroTuner.getStatus().minCutOff,
+          controller.faceMatrixFilter.minCutOff,
         oneEuroBeta:
-          oneEuroTuner.getStatus().beta,
+          controller.faceMatrixFilter.beta,
         oneEuroConverged:
           oneEuroTuner.getStatus().converged,
         oneEuroConvergenceProgress:
@@ -2989,6 +3006,86 @@ export async function createMaskedCameraStream(
             lastDeadbandEffect,
           stage:
             'post-estimator-metric',
+        },
+      );
+    };
+
+    const setOneEuroMinCutOff = (
+      minCutOff: number,
+    ) => {
+      const previous =
+        controller.faceMatrixFilter.minCutOff;
+
+      const next =
+        Math.min(
+          MAX_ONE_EURO_MIN_CUTOFF,
+          Math.max(
+            MIN_ONE_EURO_MIN_CUTOFF,
+            Number.isFinite(minCutOff)
+              ? minCutOff
+              : previous,
+          ),
+        );
+
+      oneEuroManualOverride = true;
+
+      controller.faceMatrixFilter.minCutOff =
+        next;
+      controller.faceScaleFilter.minCutOff =
+        next;
+
+      debugLogger?.log(
+        'one_euro_config_change',
+        {
+          frameIndex:
+            trackingFrameIndex,
+          parameter: 'minCutOff',
+          from: previous,
+          requested: minCutOff,
+          to: next,
+          beta:
+            controller.faceMatrixFilter.beta,
+          manualOverride: true,
+        },
+      );
+    };
+
+    const setOneEuroBeta = (
+      beta: number,
+    ) => {
+      const previous =
+        controller.faceMatrixFilter.beta;
+
+      const next =
+        Math.min(
+          MAX_ONE_EURO_BETA,
+          Math.max(
+            MIN_ONE_EURO_BETA,
+            Number.isFinite(beta)
+              ? beta
+              : previous,
+          ),
+        );
+
+      oneEuroManualOverride = true;
+
+      controller.faceMatrixFilter.beta =
+        next;
+      controller.faceScaleFilter.beta =
+        next;
+
+      debugLogger?.log(
+        'one_euro_config_change',
+        {
+          frameIndex:
+            trackingFrameIndex,
+          parameter: 'beta',
+          from: previous,
+          requested: beta,
+          to: next,
+          minCutOff:
+            controller.faceMatrixFilter.minCutOff,
+          manualOverride: true,
         },
       );
     };
@@ -3109,6 +3206,8 @@ export async function createMaskedCameraStream(
       stop,
       setGlobalThresholdPx,
       setPointDeadbandPx,
+      setOneEuroMinCutOff,
+      setOneEuroBeta,
       setVerificationHz,
       setAutoTuningEnabled,
       getTrackingStatus,
