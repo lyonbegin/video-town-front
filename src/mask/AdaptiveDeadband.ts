@@ -21,6 +21,8 @@ type PointState = {
   previousInput: Point3 | null;
   held: Point3 | null;
   noiseHistory: number[];
+  noiseRadius: number;
+  samplesSinceRadiusRefresh: number;
   moving: boolean;
   quietFrames: number;
 };
@@ -36,29 +38,27 @@ const DEFAULTS: Required<AdaptiveDeadbandOptions> = {
   quietFramesToHold: 3,
 };
 
-function median(values: number[]) {
+const RADIUS_REFRESH_INTERVAL = 4;
+
+function medianInPlace(values: number[]) {
   if (values.length === 0) return 0;
 
-  const sorted = [...values].sort((a, b) => a - b);
-  const middle = Math.floor(sorted.length / 2);
+  values.sort((a, b) => a - b);
+  const middle = values.length >> 1;
 
-  if (sorted.length % 2 === 1) {
-    return sorted[middle];
+  if ((values.length & 1) === 1) {
+    return values[middle];
   }
 
-  return (sorted[middle - 1] + sorted[middle]) * 0.5;
+  return (values[middle - 1] + values[middle]) * 0.5;
 }
 
 function distance3(a: Point3, b: Point3) {
-  return Math.hypot(
-    a[0] - b[0],
-    a[1] - b[1],
-    a[2] - b[2],
-  );
-}
+  const dx = a[0] - b[0];
+  const dy = a[1] - b[1];
+  const dz = a[2] - b[2];
 
-function clonePoint(point: number[]): Point3 {
-  return [point[0], point[1], point[2]];
+  return Math.sqrt(dx * dx + dy * dy + dz * dz);
 }
 
 function faceScale(points: number[][]) {
@@ -67,11 +67,13 @@ function faceScale(points: number[][]) {
   let yMin = Number.POSITIVE_INFINITY;
   let yMax = Number.NEGATIVE_INFINITY;
 
-  for (const point of points) {
-    xMin = Math.min(xMin, point[0]);
-    xMax = Math.max(xMax, point[0]);
-    yMin = Math.min(yMin, point[1]);
-    yMax = Math.max(yMax, point[1]);
+  for (let i = 0; i < points.length; i++) {
+    const point = points[i];
+
+    if (point[0] < xMin) xMin = point[0];
+    if (point[0] > xMax) xMax = point[0];
+    if (point[1] < yMin) yMin = point[1];
+    if (point[1] > yMax) yMax = point[1];
   }
 
   const width = xMax - xMin;
@@ -81,16 +83,16 @@ function faceScale(points: number[][]) {
 }
 
 /**
- * Rolling Hampel/MAD noise estimator + hysteresis deadband.
+ * Rolling MAD noise estimator + hysteresis deadband.
  *
- * Input coordinates are expected to already be temporally smoothed.
- * This stage does not interpolate again. It only holds the previous output
- * while a landmark remains inside its own learned noise envelope.
+ * This stage does no interpolation. Each landmark keeps a cached noise radius
+ * learned from recent inlier motion. While the input stays inside that radius
+ * the previous output is held exactly. Once it exits, values pass through until
+ * motion becomes quiet again.
  *
- * Once a point clearly leaves that envelope, the point enters "moving" mode
- * and all following values pass through until its per-frame motion settles
- * below the release threshold for a few consecutive frames. This preserves
- * expressions and deliberate slow motion while suppressing static micro-jitter.
+ * MAD is intentionally recalculated only when enough new inlier samples arrive.
+ * Re-sorting 468 histories on every frame added measurable CPU/GC cost without
+ * improving the noise estimate.
  */
 export class AdaptiveLandmarkDeadband {
   private readonly options: Required<AdaptiveDeadbandOptions>;
@@ -129,29 +131,29 @@ export class AdaptiveLandmarkDeadband {
 
     for (let i = 0; i < points.length; i++) {
       const state = this.states[i];
-      const current = clonePoint(points[i]);
+      const current = points[i] as Point3;
 
       if (!state.previousInput || !state.held) {
         state.previousInput = current;
         state.held = current;
-        output[i] = [...current];
+        output[i] = current;
         continue;
       }
 
       const frameDelta =
         distance3(current, state.previousInput) / scale;
 
-      const radius = this.getNoiseRadius(state);
-      radiusSum += radius;
-      radiusMax = Math.max(radiusMax, radius);
-
       if (state.noiseHistory.length < this.options.minSamples) {
-        this.pushNoise(state, frameDelta);
+        this.pushNoise(state, frameDelta, true);
         state.previousInput = current;
         state.held = current;
-        output[i] = [...current];
+        output[i] = current;
         continue;
       }
+
+      const radius = state.noiseRadius;
+      radiusSum += radius;
+      if (radius > radiusMax) radiusMax = radius;
 
       if (state.moving) {
         const releaseThreshold =
@@ -165,7 +167,7 @@ export class AdaptiveLandmarkDeadband {
 
         state.previousInput = current;
         state.held = current;
-        output[i] = [...current];
+        output[i] = current;
 
         if (
           state.quietFrames >=
@@ -173,6 +175,9 @@ export class AdaptiveLandmarkDeadband {
         ) {
           state.moving = false;
           state.quietFrames = 0;
+
+          // Start learning the new resting noise around this position.
+          this.pushNoise(state, frameDelta, false);
         }
 
         continue;
@@ -183,21 +188,29 @@ export class AdaptiveLandmarkDeadband {
 
       if (distanceFromHeld <= radius) {
         heldCount++;
-        output[i] = [...state.held];
+        output[i] = state.held;
 
-        this.learnNoiseIfInlier(
-          state,
-          frameDelta,
-        );
+        // We already know this sample is inside the current noise envelope.
+        // Update the history cheaply and refresh MAD only every few samples.
+        this.pushNoise(state, frameDelta, false);
       } else {
         state.moving = true;
         state.quietFrames = 0;
         state.held = current;
-        output[i] = [...current];
+        output[i] = current;
       }
 
       state.previousInput = current;
     }
+
+    const measuredCount = Math.max(
+      1,
+      this.states.filter(
+        (state) =>
+          state.noiseHistory.length >=
+          this.options.minSamples,
+      ).length,
+    );
 
     this.status = {
       holdRatio:
@@ -205,9 +218,7 @@ export class AdaptiveLandmarkDeadband {
           ? heldCount / points.length
           : 0,
       meanNoiseRadius:
-        points.length > 0
-          ? radiusSum / points.length
-          : 0,
+        radiusSum / measuredCount,
       maxNoiseRadius: radiusMax,
     };
 
@@ -227,24 +238,69 @@ export class AdaptiveLandmarkDeadband {
         previousInput: null,
         held: null,
         noiseHistory: [],
+        noiseRadius: this.options.minRadius,
+        samplesSinceRadiusRefresh: 0,
         moving: false,
         quietFrames: 0,
       }),
     );
   }
 
-  private getNoiseRadius(state: PointState) {
-    if (state.noiseHistory.length === 0) {
-      return this.options.minRadius;
+  private pushNoise(
+    state: PointState,
+    value: number,
+    forceRefresh: boolean,
+  ) {
+    if (!Number.isFinite(value)) return;
+
+    state.noiseHistory.push(Math.max(0, value));
+
+    if (
+      state.noiseHistory.length >
+      this.options.windowSize
+    ) {
+      state.noiseHistory.shift();
     }
 
-    const center = median(state.noiseHistory);
-    const deviations =
-      state.noiseHistory.map((value) =>
-        Math.abs(value - center),
-      );
+    state.samplesSinceRadiusRefresh++;
 
-    const mad = median(deviations);
+    const enoughSamples =
+      state.noiseHistory.length >=
+      this.options.minSamples;
+
+    if (
+      enoughSamples &&
+      (
+        forceRefresh ||
+        state.samplesSinceRadiusRefresh >=
+          RADIUS_REFRESH_INTERVAL
+      )
+    ) {
+      state.noiseRadius =
+        this.calculateNoiseRadius(
+          state.noiseHistory,
+        );
+
+      state.samplesSinceRadiusRefresh = 0;
+    }
+  }
+
+  private calculateNoiseRadius(
+    history: number[],
+  ) {
+    const sorted = history.slice();
+    const center = medianInPlace(sorted);
+
+    const deviations =
+      new Array<number>(history.length);
+
+    for (let i = 0; i < history.length; i++) {
+      deviations[i] =
+        Math.abs(history[i] - center);
+    }
+
+    const mad =
+      medianInPlace(deviations);
 
     const radius =
       center +
@@ -259,53 +315,5 @@ export class AdaptiveLandmarkDeadband {
         radius,
       ),
     );
-  }
-
-  private learnNoiseIfInlier(
-    state: PointState,
-    value: number,
-  ) {
-    if (state.noiseHistory.length < this.options.minSamples) {
-      this.pushNoise(state, value);
-      return;
-    }
-
-    const center = median(state.noiseHistory);
-    const deviations =
-      state.noiseHistory.map((sample) =>
-        Math.abs(sample - center),
-      );
-
-    const mad = median(deviations);
-
-    const inlierLimit = Math.max(
-      this.options.minRadius * 2,
-      center +
-        this.options.threshold *
-          this.options.constantScaleFactor *
-          mad,
-    );
-
-    if (value <= inlierLimit) {
-      this.pushNoise(state, value);
-    }
-  }
-
-  private pushNoise(
-    state: PointState,
-    value: number,
-  ) {
-    if (!Number.isFinite(value)) return;
-
-    state.noiseHistory.push(
-      Math.max(0, value),
-    );
-
-    if (
-      state.noiseHistory.length >
-      this.options.windowSize
-    ) {
-      state.noiseHistory.shift();
-    }
   }
 }
