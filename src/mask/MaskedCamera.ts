@@ -677,7 +677,6 @@ export async function createMaskedCameraStream(
               now,
               video.videoWidth,
               video.videoHeight,
-              now,
             );
 
           const stabilizedLandmarks =
@@ -685,6 +684,7 @@ export async function createMaskedCameraStream(
               smoothedLandmarks,
               video.videoWidth,
               video.videoHeight,
+              now,
             );
 
           const estimateResult =
