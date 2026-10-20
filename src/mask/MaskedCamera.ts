@@ -80,6 +80,7 @@ export interface MaskedCameraController {
   setAutoTuningEnabled: (enabled: boolean) => void;
   getTrackingStatus: () => TrackingStatus;
   getDebugSession: () => MaskDebugSessionInfo;
+  flushDebugSession: () => Promise<void>;
 }
 
 type NormalizedLandmark = {
@@ -3142,6 +3143,11 @@ export async function createMaskedCameraStream(
       () =>
         debugLogger!.getSessionInfo();
 
+    const flushDebugSession =
+      async () => {
+        await debugLogger?.flush();
+      };
+
     const stop = () => {
       if (stopped) return;
 
@@ -3212,6 +3218,7 @@ export async function createMaskedCameraStream(
       setAutoTuningEnabled,
       getTrackingStatus,
       getDebugSession,
+      flushDebugSession,
     };
   } catch (error) {
     stopped = true;
