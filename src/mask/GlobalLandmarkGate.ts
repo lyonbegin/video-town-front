@@ -14,6 +14,25 @@ export interface GlobalLandmarkGateStatus {
   movedCorePoints: number;
   requiredMovedCorePoints: number;
   accepted: boolean;
+  evaluated: boolean;
+}
+
+export interface CoreLandmarkMeasurement {
+  index: number;
+  current: [number, number, number];
+  acceptedBaseline: [number, number, number];
+  dxPx: number;
+  dyPx: number;
+  distancePx: number;
+  overThreshold: boolean;
+}
+
+export interface GlobalLandmarkGateResult {
+  accepted: boolean;
+  evaluated: boolean;
+  firstFrame: boolean;
+  points: number[][];
+  coreMeasurements: CoreLandmarkMeasurement[];
 }
 
 const MIN_THRESHOLD_PX = 0;
@@ -34,6 +53,14 @@ function clonePoints(points: number[][]) {
   ]);
 }
 
+function toPoint3(point: number[]): [number, number, number] {
+  return [
+    point[0] ?? 0,
+    point[1] ?? 0,
+    point[2] ?? 0,
+  ];
+}
+
 /**
  * Global landmark gate.
  *
@@ -46,6 +73,9 @@ function clonePoints(points: number[][]) {
  *   the new accepted frame.
  * - Evaluation itself is capped by verificationHz. Between evaluations the
  *   previous accepted frame is kept unchanged.
+ *
+ * For diagnostics, every evaluated frame also returns the exact core-point
+ * displacement that caused the accept/hold decision.
  */
 export class GlobalLandmarkGate {
   private acceptedPoints: number[][] = [];
@@ -81,6 +111,7 @@ export class GlobalLandmarkGate {
       requiredMovedCorePoints:
         REQUIRED_MOVED_CORE_POINTS,
       accepted: false,
+      evaluated: false,
     };
   }
 
@@ -94,6 +125,7 @@ export class GlobalLandmarkGate {
       requiredMovedCorePoints:
         REQUIRED_MOVED_CORE_POINTS,
       accepted: false,
+      evaluated: false,
     };
   }
 
@@ -128,7 +160,7 @@ export class GlobalLandmarkGate {
     imageWidth: number,
     imageHeight: number,
     timestampMs: number,
-  ) {
+  ): GlobalLandmarkGateResult {
     if (
       this.acceptedPoints.length !==
       points.length
@@ -139,21 +171,52 @@ export class GlobalLandmarkGate {
       this.lastEvaluationMs =
         timestampMs;
 
+      const coreMeasurements =
+        CORE_LANDMARK_INDICES
+          .map((index) => {
+            const point =
+              this.acceptedPoints[index];
+
+            if (!point) return null;
+
+            const point3 =
+              toPoint3(point);
+
+            return {
+              index,
+              current: point3,
+              acceptedBaseline: point3,
+              dxPx: 0,
+              dyPx: 0,
+              distancePx: 0,
+              overThreshold: true,
+            };
+          })
+          .filter(
+            (
+              item,
+            ): item is CoreLandmarkMeasurement =>
+              item !== null,
+          );
+
       this.status = {
         thresholdPx: this.thresholdPx,
         verificationHz:
           this.verificationHz,
         movedCorePoints:
-          CORE_LANDMARK_INDICES.length,
+          coreMeasurements.length,
         requiredMovedCorePoints:
           REQUIRED_MOVED_CORE_POINTS,
         accepted: true,
+        evaluated: true,
       };
 
       return {
         accepted: true,
         evaluated: true,
+        firstFrame: true,
         points: this.acceptedPoints,
+        coreMeasurements,
       };
     }
 
@@ -165,10 +228,18 @@ export class GlobalLandmarkGate {
       timestampMs - this.lastEvaluationMs <
         intervalMs
     ) {
+      this.status = {
+        ...this.status,
+        accepted: false,
+        evaluated: false,
+      };
+
       return {
         accepted: false,
         evaluated: false,
+        firstFrame: false,
         points: this.acceptedPoints,
+        coreMeasurements: [],
       };
     }
 
@@ -187,6 +258,9 @@ export class GlobalLandmarkGate {
 
     let movedCorePoints = 0;
     let validCorePoints = 0;
+
+    const coreMeasurements:
+      CoreLandmarkMeasurement[] = [];
 
     for (
       let i = 0;
@@ -217,12 +291,24 @@ export class GlobalLandmarkGate {
       const distancePx =
         Math.hypot(dxPx, dyPx);
 
-      if (
+      const overThreshold =
         this.thresholdPx <= 0 ||
-        distancePx >= this.thresholdPx
-      ) {
+        distancePx >= this.thresholdPx;
+
+      if (overThreshold) {
         movedCorePoints++;
       }
+
+      coreMeasurements.push({
+        index,
+        current: toPoint3(current),
+        acceptedBaseline:
+          toPoint3(previous),
+        dxPx,
+        dyPx,
+        distancePx,
+        overThreshold,
+      });
     }
 
     const requiredMovedCorePoints =
@@ -248,12 +334,15 @@ export class GlobalLandmarkGate {
       movedCorePoints,
       requiredMovedCorePoints,
       accepted,
+      evaluated: true,
     };
 
     return {
       accepted,
       evaluated: true,
+      firstFrame: false,
       points: this.acceptedPoints,
+      coreMeasurements,
     };
   }
 
