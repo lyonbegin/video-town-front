@@ -51,7 +51,7 @@ export const DEFAULT_GLOBAL_THRESHOLD_PX = 3.0;
 export const DEFAULT_EXPRESSION_THRESHOLD_PX = 1.5;
 export const DEFAULT_GATE_VERIFICATION_HZ = 15;
 export const MASK_RUNTIME_VERSION =
-  'mask-runtime-20261020-v7';
+  'mask-runtime-20261020-v9';
 
 // Seed selected by replaying the uploaded real session through MindAR 1.2.5's
 // exact OneEuro equation. Runtime tuning below keeps using MindAR's filter;
@@ -68,6 +68,7 @@ const MAX_ONE_EURO_BETA = 30;
 // sqrt((dx*width)^2 + (dy*height)^2 + (dz*width)^2)
 export const DEFAULT_POINT_DEADBAND_3D_PX = 2.0;
 const MAX_POINT_DEADBAND_3D_PX = 10.0;
+const STABILITY_BACKTEST_CAPTURE_MS = 7000;
 
 export interface MaskedCameraController {
   stream: MediaStream;
@@ -2047,6 +2048,9 @@ export async function createMaskedCameraStream(
           metricLandmarkDeadband: true,
           liveDeadbandSlider: true,
           liveOneEuroSliders: true,
+          frontendWorkerStabilityBacktest: true,
+          stabilityBacktestCaptureMs:
+            STABILITY_BACKTEST_CAPTURE_MS,
           pointDeadbandEffectLogging: true,
           loggingContinuesAfterConvergence: true,
           runtimeProbeEndpoint: true,
@@ -2212,6 +2216,234 @@ export async function createMaskedCameraStream(
         DeadbandEffectMonitor['measure']
       > | null = null;
 
+    let stabilityBacktestWorker:
+      Worker | null = null;
+    let stabilityBacktestCaptureStartedAt:
+      number | null = null;
+    let stabilityBacktestCaptureFinished =
+      false;
+    let stabilityBacktestApplied = false;
+    let stabilityBacktestSampleCount = 0;
+
+    try {
+      stabilityBacktestWorker =
+        new Worker(
+          new URL(
+            './MaskStabilityBacktest.worker.ts',
+            import.meta.url,
+          ),
+          {
+            type: 'module',
+          },
+        );
+
+      stabilityBacktestWorker.onmessage =
+        (event) => {
+          if (stopped) {
+            return;
+          }
+
+          const result =
+            event.data as {
+              type?: string;
+              message?: string;
+              sampleCount?: number;
+              durationMs?: number;
+              computeMs?: number;
+              minCutOff?: number;
+              beta?: number;
+              pointDeadbandPx?: number;
+              staticJitterRatio?: number;
+              motionErrorRatio?: number;
+              deadbandJitterRatio?: number;
+              deadbandMotionErrorRatio?: number;
+            };
+
+          if (
+            result.type === 'error'
+          ) {
+            debugLogger?.log(
+              'stability_backtest_error',
+              {
+                frameIndex:
+                  trackingFrameIndex,
+                message:
+                  result.message ??
+                  'unknown worker error',
+                sampleCount:
+                  result.sampleCount ??
+                  stabilityBacktestSampleCount,
+              },
+            );
+            return;
+          }
+
+          if (
+            result.type !== 'result' ||
+            !Number.isFinite(
+              result.minCutOff,
+            ) ||
+            !Number.isFinite(
+              result.beta,
+            ) ||
+            !Number.isFinite(
+              result.pointDeadbandPx,
+            )
+          ) {
+            return;
+          }
+
+          const previousMinCutOff =
+            controller
+              .faceMatrixFilter
+              .minCutOff;
+          const previousBeta =
+            controller
+              .faceMatrixFilter
+              .beta;
+          const previousDeadband =
+            pointDeadband
+              .getThresholdPx();
+
+          const minCutOff =
+            Math.min(
+              MAX_ONE_EURO_MIN_CUTOFF,
+              Math.max(
+                MIN_ONE_EURO_MIN_CUTOFF,
+                result.minCutOff!,
+              ),
+            );
+
+          const beta =
+            Math.min(
+              MAX_ONE_EURO_BETA,
+              Math.max(
+                MIN_ONE_EURO_BETA,
+                result.beta!,
+              ),
+            );
+
+          const deadbandPx =
+            Math.min(
+              MAX_POINT_DEADBAND_3D_PX,
+              Math.max(
+                0,
+                result
+                  .pointDeadbandPx!,
+              ),
+            );
+
+          // Once the worker has selected the session-specific optimum, prevent
+          // the legacy inline tuner from overwriting those live OneEuro values.
+          oneEuroManualOverride = true;
+
+          controller.faceMatrixFilter.minCutOff =
+            minCutOff;
+          controller.faceMatrixFilter.beta =
+            beta;
+          controller.faceScaleFilter.minCutOff =
+            minCutOff;
+          controller.faceScaleFilter.beta =
+            beta;
+
+          pointDeadband.setThresholdPx(
+            deadbandPx,
+          );
+          pointDeadbandRevision++;
+
+          stabilityBacktestApplied =
+            true;
+
+          debugLogger?.log(
+            'stability_backtest_result',
+            {
+              frameIndex:
+                trackingFrameIndex,
+              sampleCount:
+                result.sampleCount ??
+                stabilityBacktestSampleCount,
+              captureDurationMs:
+                result.durationMs ??
+                STABILITY_BACKTEST_CAPTURE_MS,
+              workerComputeMs:
+                result.computeMs ??
+                null,
+              previous: {
+                minCutOff:
+                  previousMinCutOff,
+                beta:
+                  previousBeta,
+                pointDeadbandPx:
+                  previousDeadband,
+              },
+              applied: {
+                minCutOff,
+                beta,
+                pointDeadbandPx:
+                  deadbandPx,
+              },
+              score: {
+                staticJitterRatio:
+                  result
+                    .staticJitterRatio ??
+                  null,
+                motionErrorRatio:
+                  result
+                    .motionErrorRatio ??
+                  null,
+                deadbandJitterRatio:
+                  result
+                    .deadbandJitterRatio ??
+                  null,
+                deadbandMotionErrorRatio:
+                  result
+                    .deadbandMotionErrorRatio ??
+                  null,
+              },
+              execution:
+                'frontend-web-worker',
+            },
+          );
+
+          stabilityBacktestWorker
+            ?.terminate();
+          stabilityBacktestWorker =
+            null;
+        };
+
+      stabilityBacktestWorker.onerror =
+        (event) => {
+          debugLogger?.log(
+            'stability_backtest_error',
+            {
+              frameIndex:
+                trackingFrameIndex,
+              message:
+                event.message,
+              execution:
+                'frontend-web-worker',
+            },
+          );
+        };
+    } catch (error) {
+      debugLogger?.log(
+        'stability_backtest_error',
+        {
+          frameIndex:
+            trackingFrameIndex,
+          message:
+            error instanceof Error
+              ? error.message
+              : String(error),
+          execution:
+            'frontend-web-worker-init',
+        },
+      );
+
+      stabilityBacktestWorker =
+        null;
+    }
+
     const updateTrackingRate = (
       timestampMs: number,
     ) => {
@@ -2340,6 +2572,32 @@ export async function createMaskedCameraStream(
             controller.faceMatrixFilter.reset();
             controller.faceScaleFilter.reset();
             oneEuroTuner.resetWindow();
+
+            if (
+              stabilityBacktestWorker &&
+              !stabilityBacktestApplied
+            ) {
+              stabilityBacktestWorker.postMessage({
+                type: 'reset',
+              });
+              stabilityBacktestCaptureStartedAt =
+                null;
+              stabilityBacktestCaptureFinished =
+                false;
+              stabilityBacktestSampleCount = 0;
+
+              debugLogger?.log(
+                'stability_backtest_capture_reset',
+                {
+                  frameIndex:
+                    trackingFrameIndex,
+                  reason:
+                    'face_lost',
+                },
+                now,
+              );
+            }
+
             faceMesh.visible = false;
           }
         } else {
@@ -2455,6 +2713,120 @@ export async function createMaskedCameraStream(
               video.videoWidth,
               video.videoHeight,
             );
+
+          if (
+            stabilityBacktestWorker &&
+            !stabilityBacktestCaptureFinished &&
+            !stabilityBacktestApplied
+          ) {
+            if (
+              stabilityBacktestCaptureStartedAt ===
+              null
+            ) {
+              stabilityBacktestCaptureStartedAt =
+                poseFilterTimestamp;
+
+              debugLogger?.log(
+                'stability_backtest_capture_start',
+                {
+                  frameIndex:
+                    trackingFrameIndex,
+                  captureMs:
+                    STABILITY_BACKTEST_CAPTURE_MS,
+                  execution:
+                    'frontend-web-worker',
+                },
+                now,
+              );
+            }
+
+            const captureElapsedMs =
+              poseFilterTimestamp -
+              stabilityBacktestCaptureStartedAt;
+
+            if (
+              captureElapsedMs <=
+              STABILITY_BACKTEST_CAPTURE_MS
+            ) {
+              const faceMatrixData =
+                new Float32Array(
+                  rawPoseEstimate.faceMatrix,
+                );
+
+              const metricData =
+                new Float32Array(
+                  deformationEstimate
+                    .metricLandmarks
+                    .length * 3,
+                );
+
+              let metricOffset = 0;
+
+              for (
+                const point of
+                deformationEstimate
+                  .metricLandmarks
+              ) {
+                metricData[
+                  metricOffset++
+                ] =
+                  point[0] ?? 0;
+                metricData[
+                  metricOffset++
+                ] =
+                  point[1] ?? 0;
+                metricData[
+                  metricOffset++
+                ] =
+                  point[2] ?? 0;
+              }
+
+              stabilityBacktestWorker.postMessage(
+                {
+                  type: 'sample',
+                  timestampMs:
+                    poseFilterTimestamp,
+                  pixelsPerMetricUnit,
+                  faceMatrixBuffer:
+                    faceMatrixData.buffer,
+                  metricLandmarksBuffer:
+                    metricData.buffer,
+                },
+                [
+                  faceMatrixData.buffer,
+                  metricData.buffer,
+                ],
+              );
+
+              stabilityBacktestSampleCount++;
+            }
+
+            if (
+              captureElapsedMs >=
+              STABILITY_BACKTEST_CAPTURE_MS
+            ) {
+              stabilityBacktestCaptureFinished =
+                true;
+
+              stabilityBacktestWorker.postMessage({
+                type: 'optimize',
+              });
+
+              debugLogger?.log(
+                'stability_backtest_capture_end',
+                {
+                  frameIndex:
+                    trackingFrameIndex,
+                  captureElapsedMs,
+                  sampleCount:
+                    stabilityBacktestSampleCount,
+                  execution:
+                    'frontend-web-worker',
+                },
+                now,
+              );
+            }
+          }
 
           const deadbandedMetricLandmarks =
             pointDeadband.applyMetric(
@@ -3153,6 +3525,11 @@ export async function createMaskedCameraStream(
 
       stopped = true;
       trackingLoopEnabled = false;
+
+      stabilityBacktestWorker
+        ?.terminate();
+      stabilityBacktestWorker =
+        null;
 
       debugLogger?.stop({
         trackingFrameIndex,
