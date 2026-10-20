@@ -805,10 +805,14 @@ export async function createMaskedCameraStream(
         },
       });
 
-    // MindAR's built-in loop never started. Our only tracking path is:
-    // detect -> RelativeVelocity(raw landmarks) -> global core-point gate.
-    // The gate decides whether the entire landmark frame is accepted.
-    // If rejected, estimator/pose/geometry are not updated at all.
+    // MindAR's built-in loop never started. Our custom path deliberately
+    // separates HEAD POSE from FACE DEFORMATION:
+    //
+    // detect -> RelativeVelocity -> estimator -> faceMatrix EVERY tracking frame
+    //                              -> deformation gate -> geometry only on accept
+    //
+    // The stabilizer must never hold the head pose. Otherwise the mask can stay
+    // at an old screen position while the real face has already moved.
 
     const smoother =
       new FaceLandmarksSmoother();
@@ -971,6 +975,28 @@ export async function createMaskedCameraStream(
               video.videoHeight,
             );
 
+          // Restore the original fast-follow behavior for the mask pose.
+          // The estimator and MindAR onUpdate run on EVERY successful tracking
+          // frame, so faceMatrix follows translation/rotation immediately.
+          const livePoseEstimate =
+            controller.estimator.estimate(
+              smoothedLandmarks,
+            );
+
+          livePoseEstimate.blendshapes =
+            results.faceBlendshapes?.[0];
+
+          controller.lastEstimateResult =
+            livePoseEstimate;
+
+          controller.onUpdate({
+            hasFace: true,
+            estimateResult:
+              livePoseEstimate,
+          });
+
+          // The adaptive gate is now used ONLY for mesh deformation. Holding a
+          // deformation frame cannot hold the whole mask at an old position.
           const gateResult =
             globalGate.evaluate(
               smoothedLandmarks,
@@ -988,41 +1014,25 @@ export async function createMaskedCameraStream(
             | null = null;
 
           if (gateResult.accepted) {
-            const estimateResult =
-              controller.estimator.estimate(
-                gateResult.points,
-              );
-
-            estimateResult.blendshapes =
-              results.faceBlendshapes?.[0];
-
-            controller.lastEstimateResult =
-              estimateResult;
-
-            controller.onUpdate({
-              hasFace: true,
-              estimateResult,
-            });
-
             for (
               const geometry of
               controller.customFaceGeometries
             ) {
               geometry.updatePositions(
-                estimateResult.metricLandmarks,
+                livePoseEstimate.metricLandmarks,
               );
             }
 
             appliedEstimate = {
               faceScale:
-                estimateResult.faceScale,
+                livePoseEstimate.faceScale,
               faceMatrix:
                 Array.from(
-                  estimateResult.faceMatrix,
+                  livePoseEstimate.faceMatrix,
                 ),
               metricLandmarks:
                 flattenNumericLandmarks(
-                  estimateResult.metricLandmarks,
+                  livePoseEstimate.metricLandmarks,
                 ),
             };
           }
@@ -1075,6 +1085,14 @@ export async function createMaskedCameraStream(
                     gateResult.tuning,
                 },
                 appliedEstimate,
+                livePoseEstimate: {
+                  faceScale:
+                    livePoseEstimate.faceScale,
+                  faceMatrix:
+                    Array.from(
+                      livePoseEstimate.faceMatrix,
+                    ),
+                },
                 currentOutputEstimate:
                   controller.lastEstimateResult
                     ? {
