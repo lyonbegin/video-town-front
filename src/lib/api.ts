@@ -2,63 +2,13 @@ import type { AuthProfile, ConsultationSession, PlatformRole, TelemedicineRole }
 
 export const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:8888').replace(/\/$/, '');
 export const TEST_LOGIN_KEY = import.meta.env.VITE_TEST_LOGIN_KEY || '';
-const DEV_PROFILE_KEY = 'carelink-dev-profile';
-export const DEV_PROFILE_UPDATED_EVENT = 'carelink-dev-profile-updated';
-
-function loadStoredDevProfile(): AuthProfile | null {
-  try {
-    const raw = localStorage.getItem(DEV_PROFILE_KEY);
-    return raw ? JSON.parse(raw) as AuthProfile : null;
-  } catch {
-    return null;
-  }
-}
-
-function persistDevProfile(profile: AuthProfile): void {
-  localStorage.setItem(DEV_PROFILE_KEY, JSON.stringify(profile));
-  window.dispatchEvent(new CustomEvent<AuthProfile>(DEV_PROFILE_UPDATED_EVENT, {
-    detail: profile,
-  }));
-}
-
-async function request<T>(
-  path: string,
-  init: RequestInit = {},
-  token?: string,
-  allowDevTokenRefresh = true,
-): Promise<T> {
+async function request<T>(path: string, init: RequestInit = {}, token?: string): Promise<T> {
   const headers = new Headers(init.headers);
   if (init.body && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
   if (token) headers.set('Authorization', `Bearer ${token}`);
 
   const response = await fetch(`${API_BASE_URL}${path}`, { ...init, headers });
   const body = await response.json().catch(() => null);
-
-  if (
-    !response.ok &&
-    response.status === 401 &&
-    allowDevTokenRefresh &&
-    path !== '/auth/dev-token'
-  ) {
-    const stored = loadStoredDevProfile();
-
-    if (stored) {
-      const refreshed = await issueDevToken({
-        userId: stored.userId,
-        name: stored.name,
-        platformRole: stored.platformRole,
-      });
-
-      persistDevProfile(refreshed);
-
-      return request<T>(
-        path,
-        init,
-        refreshed.token,
-        false,
-      );
-    }
-  }
 
   if (!response.ok) {
     const message = body?.message || body?.error || `${response.status} ${response.statusText}`;
@@ -76,41 +26,12 @@ export async function issueDevToken(input: {
   const headers: Record<string, string> = {};
   if (TEST_LOGIN_KEY) headers['x-test-login-key'] = TEST_LOGIN_KEY;
 
-  const result = await request<{ accessToken: string }>(
-    '/auth/dev-token',
-    {
-      method: 'POST',
-      headers,
-      body: JSON.stringify(input),
-    },
-    undefined,
-    false,
-  );
-
+  const result = await request<{ accessToken: string }>('/auth/dev-token', {
+    method: 'POST',
+    headers,
+    body: JSON.stringify(input),
+  });
   return { ...input, token: result.accessToken };
-}
-
-export async function refreshDevProfile(
-  profile?: AuthProfile | null,
-): Promise<AuthProfile | null> {
-  const current =
-    profile ??
-    loadStoredDevProfile();
-
-  if (!current) {
-    return null;
-  }
-
-  const refreshed =
-    await issueDevToken({
-      userId: current.userId,
-      name: current.name,
-      platformRole:
-        current.platformRole,
-    });
-
-  persistDevProfile(refreshed);
-  return refreshed;
 }
 
 export async function getHealth() {
