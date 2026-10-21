@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Socket } from 'socket.io-client';
-import { API_BASE_URL, refreshDevProfile } from '../lib/api';
+import { API_BASE_URL } from '../lib/api';
 import { MediasoupSession } from '../realtime/MediasoupSession';
 import { createRealtimeSocket, emitAck, waitForSocketReady } from '../realtime/socket';
 import type { AuthProfile, ConsultationSession, RemoteTile } from '../types';
@@ -48,8 +48,6 @@ export default function ConsultationRoom({
   const joinedRef = useRef(false);
   const liveRef = useRef(false);
   const localStreamRef = useRef<MediaStream>();
-  const authRefreshInFlightRef =
-    useRef(false);
 
   const me = useMemo(() => session.participants.find((p) => p.userId === profile.userId), [session, profile.userId]);
   const isHost = session.hostUserIds.includes(profile.userId);
@@ -108,41 +106,7 @@ export default function ConsultationRoom({
       }
     };
     const onDisconnect = () => setSocketState('reconnecting');
-    const onConnectError = (error: Error) => {
-      setSocketState('failed');
-
-      const message =
-        error?.message || '';
-
-      if (
-        /token|expired|unauthor|auth/i.test(
-          message,
-        ) &&
-        !authRefreshInFlightRef.current
-      ) {
-        authRefreshInFlightRef.current =
-          true;
-
-        void refreshDevProfile(
-          profile,
-        )
-          .catch((refreshError) => {
-            if (!cancelled) {
-              setError(
-                refreshError instanceof Error
-                  ? refreshError.message
-                  : String(
-                      refreshError,
-                    ),
-              );
-            }
-          })
-          .finally(() => {
-            authRefreshInFlightRef.current =
-              false;
-          });
-      }
-    };
+    const onConnectError = () => setSocketState('failed');
     const stateEvents = ['session:participant-joined', 'session:participant-ready', 'session:participant-disconnected', 'session:participant-left', 'rtc:peer-joined', 'rtc:peer-resumed', 'rtc:peer-left'];
 
     socket.on('session:started', onStarted);
