@@ -18,6 +18,7 @@ interface Props {
   onReady: () => void;
   ready: boolean;
   disabled?: boolean;
+  showReadyButton?: boolean;
 }
 
 export default function DeviceCheck({
@@ -26,6 +27,7 @@ export default function DeviceCheck({
   onReady,
   ready,
   disabled,
+  showReadyButton = true,
 }: Props) {
   const previewRef = useRef<HTMLVideoElement>(null);
   const maskControllerRef = useRef<MaskedCameraController>();
@@ -931,13 +933,15 @@ export default function DeviceCheck({
             </strong>
           </div>
 
-          <button
-            className="primary-button large"
-            onClick={onReady}
-            disabled={ready || disabled}
-          >
-            {ready ? '준비 완료됨' : '준비 완료'}
-          </button>
+          {showReadyButton && (
+            <button
+              className="primary-button large"
+              onClick={onReady}
+              disabled={ready || disabled}
+            >
+              {ready ? '준비 완료됨' : '준비 완료'}
+            </button>
+          )}
         </>
       )}
 
