@@ -10,7 +10,7 @@ import {
   type CameraMode,
   type MaskedCameraController,
   type TrackingStatus,
-} from '../mask/MaskedCamera';
+} from '../sdk';
 
 interface Props {
   stream?: MediaStream;
