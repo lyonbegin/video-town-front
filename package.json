@@ -1,5 +1,5 @@
 {
-  "name": "telemedicine-front",
+  "name": "video-core",
   "version": "1.0.0",
   "private": true,
   "type": "module",
@@ -27,5 +27,6 @@
     "@vitejs/plugin-react": "^4.3.1",
     "typescript": "^5.9.2",
     "vite": "^5.4.8"
-  }
+  },
+  "description": "Shared browser video, audio and real-time face mask SDK"
 }
