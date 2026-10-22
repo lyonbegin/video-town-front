@@ -40,6 +40,20 @@ export interface VideoCoreCameraSession {
 }
 
 function defaultDiagnosticsBaseUrl() {
+  try {
+    const moduleUrl =
+      new URL(import.meta.url);
+
+    if (
+      moduleUrl.protocol === 'http:' ||
+      moduleUrl.protocol === 'https:'
+    ) {
+      return moduleUrl.origin;
+    }
+  } catch {
+    // Fall back to the host page below.
+  }
+
   if (typeof window === 'undefined') {
     return '';
   }
