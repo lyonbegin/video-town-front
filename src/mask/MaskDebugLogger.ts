@@ -5,6 +5,14 @@ export interface MaskDebugSessionInfo {
   startedAt: string;
 }
 
+export interface MaskDebugLoggerOptions {
+  baseUrl?: string;
+}
+
+function normalizeBaseUrl(value?: string) {
+  return (value ?? '').replace(/\/$/, '');
+}
+
 type DebugRecord = {
   seq: number;
   type: string;
@@ -39,10 +47,9 @@ function createSessionId() {
 export class MaskDebugLogger {
   private readonly sessionId = createSessionId();
   private readonly startedAt = new Date().toISOString();
-  private readonly downloadUrl =
-    `/__mask-debug/session/${this.sessionId}.ndjson`;
-  private readonly summaryUrl =
-    `/__mask-debug/session/${this.sessionId}/summary.json`;
+  private readonly downloadUrl: string;
+  private readonly summaryUrl: string;
+  private readonly uploadUrl: string;
 
   private queue: DebugRecord[] = [];
   private sequence = 0;
@@ -50,7 +57,20 @@ export class MaskDebugLogger {
   private flushing = false;
   private timer: number;
 
-  constructor(initialData: unknown) {
+  constructor(
+    initialData: unknown,
+    options: MaskDebugLoggerOptions = {},
+  ) {
+    const baseUrl =
+      normalizeBaseUrl(options.baseUrl);
+
+    this.downloadUrl =
+      `${baseUrl}/__mask-debug/session/${this.sessionId}.ndjson`;
+    this.summaryUrl =
+      `${baseUrl}/__mask-debug/session/${this.sessionId}/summary.json`;
+    this.uploadUrl =
+      `${baseUrl}/__mask-debug/log`;
+
     this.log('session_start', initialData);
 
     this.timer = window.setInterval(
@@ -121,7 +141,7 @@ export class MaskDebugLogger {
 
     try {
       const response = await fetch(
-        '/__mask-debug/log',
+        this.uploadUrl,
         {
           method: 'POST',
           headers: {
@@ -195,7 +215,7 @@ export class MaskDebugLogger {
 
       if (
         navigator.sendBeacon(
-          '/__mask-debug/log',
+          this.uploadUrl,
           blob,
         )
       ) {
@@ -206,7 +226,7 @@ export class MaskDebugLogger {
     }
 
     void fetch(
-      '/__mask-debug/log',
+      this.uploadUrl,
       {
         method: 'POST',
         headers: {
