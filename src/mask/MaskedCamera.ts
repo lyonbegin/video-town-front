@@ -11,6 +11,24 @@ import {
 
 export type CameraMode = 'mask' | 'original';
 
+export interface MaskedCameraOptions {
+  serviceBaseUrl?: string;
+}
+
+function serviceUrl(
+  baseUrl: string | undefined,
+  pathname: string,
+) {
+  if (!baseUrl) {
+    return pathname;
+  }
+
+  return new URL(
+    pathname,
+    baseUrl,
+  ).toString();
+}
+
 export interface TrackingStatus {
   fps: number;
   frameIntervalMs: number;
@@ -1880,6 +1898,7 @@ function createFlippedInput(
 
 export async function createMaskedCameraStream(
   source: MediaStream,
+  options: MaskedCameraOptions = {},
 ): Promise<MaskedCameraController> {
   const sourceVideoTrack = source.getVideoTracks()[0];
 
@@ -2115,10 +2134,16 @@ export async function createMaskedCameraStream(
             ),
           autoTuning: true,
         },
+      }, {
+        baseUrl:
+          options.serviceBaseUrl,
       });
 
     void fetch(
-      '/__runtime-probe',
+      serviceUrl(
+        options.serviceBaseUrl,
+        '/__runtime-probe',
+      ),
       {
         cache: 'no-store',
       },
