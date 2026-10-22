@@ -1,66 +1,82 @@
-# CareLink Frontend
+# Video Core
 
-새 Realtime Session Server에 맞춘 독립 React/Vite 프론트입니다. 기존 프론트와 호환하지 않습니다.
+여러 서비스가 영상·음성·실시간 얼굴 가면 코드를 복사하지 않고 공통으로 사용하는 브라우저 SDK입니다.
 
-## 기본 구조
+## 역할
 
-- 개발 로그인: `/auth/dev-token`
-- 진료 목록/생성: `/telemedicine/consultations`
-- Socket.IO namespace: `/realtime`
-- mediasoup-client 기반 N:N SFU
-- 사용자가 `카메라·마이크 확인 시작`을 누를 때만 `getUserMedia()` 실행
-- 대기실 → 준비 완료 → Host 진료 시작 → RTC 연결
-- 카메라/마이크 pause/resume
-- 주치의 화면 공유
-- Socket.IO 재연결 및 RTC peer resume
-- video simulcast 3 layers
+- 카메라 / 마이크
+- MediaStream
+- 원본 영상 / 가면 영상 전환
+- MindAR 얼굴 추적과 3D 가면 합성
+- OneEuro / deadband / 자동 튜닝
+- WebRTC RTCRtpSender.replaceTrack() 연동
+- 추적 상태와 진단 로그
 
-## 로컬 실행
+병원, 상담, AI, 예약, 결제, 커뮤니티 같은 서비스 기능은 이 저장소에 넣지 않습니다.
 
-서버가 `http://localhost:8888`에서 실행 중이라고 가정합니다.
+## Railway
 
-```powershell
-cd C:\telemedicine-front
-Copy-Item .env.example .env
+Playground: https://video-town-front-production.up.railway.app/
+
+Standalone SDK Playground: https://video-town-front-production.up.railway.app/sdk-playground.html
+
+SDK: https://video-town-front-production.up.railway.app/sdk/video-core.esm.js
+
+## 외부 웹에서 사용
+
+MindAR가 사용하는 import map을 페이지 head에 한 번 설정합니다.
+
+```html
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/",
+    "mindar-face-three": "https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-face-three.prod.js"
+  }
+}
+</script>
+```
+
+그 다음 SDK를 불러옵니다.
+
+```js
+const { VideoCore } = await import(
+  "https://video-town-front-production.up.railway.app/sdk/video-core.esm.js"
+);
+
+const core = await VideoCore.create();
+const camera = await core.openCamera({ mode: "mask" });
+const outgoingStream = camera.stream;
+```
+
+가면 전환:
+
+```js
+await camera.disableMask();
+await camera.enableMask();
+```
+
+이미 WebRTC 연결 중이면:
+
+```js
+await camera.replaceVideoTrack(videoSender);
+await camera.replaceAudioTrack(audioSender);
+```
+
+## 빌드
+
+```bash
 npm install
-npm run dev
+npm run build
+npm start
 ```
 
-브라우저에서:
+`npm run build`는 웹 Playground와 `dist/sdk/video-core.esm.js`를 함께 생성합니다.
 
-```text
-http://localhost:5173
-```
+## 진단
 
-`.env` 기본값:
-
-```env
-VITE_API_BASE_URL=http://localhost:8888
-```
-
-서버 `.env`에는 최소한 아래가 포함되어야 합니다.
-
-```env
-PORT=8888
-MEDIA_NODE_PUBLIC_URL=http://localhost:8888
-CORS_ORIGINS=http://localhost:5173
-MEDIASOUP_ANNOUNCED_ADDRESS=127.0.0.1
-```
-
-## 두 명으로 로컬 테스트
-
-1. 서버 실행
-2. Chrome 일반 창에서 `http://localhost:5173` → `주치의` → 로그인
-3. `테스트 진료 생성` → 기본 환자 ID `patient-1` → 생성
-4. Chrome 시크릿 창에서 같은 주소 → `환자` → 로그인
-5. 환자 화면에서 새로고침 → 같은 진료 선택
-6. 양쪽에서 `카메라·마이크 확인 시작` → 브라우저 권한 허용
-7. 양쪽 `준비 완료`
-8. 의사 창에서 `진료 시작`
-9. 양쪽이 mediasoup Router에 연결되고 서로의 영상/음성이 표시됨
-
-같은 PC에서 두 창을 테스트하면 스피커-마이크 하울링이 생길 수 있으므로 한쪽 창의 스피커를 음소거하거나 이어폰을 사용하세요.
-
-## 같은 Wi-Fi의 휴대폰 테스트
-
-`localhost`는 휴대폰에서 PC를 뜻하지 않습니다. PC의 LAN IP가 예를 들어 `192.168.0.10`이라면 서버와 프론트의 환경변수를 그 주소 기준으로 변경해야 합니다. 또한 브라우저 카메라 권한은 일반적으로 보안 컨텍스트(HTTPS 또는 localhost)가 필요하므로, 휴대폰 실기기 테스트는 HTTPS 개발 터널 또는 실제 HTTPS 배포 환경에서 진행하는 것을 권장합니다.
+- GET /__runtime-probe
+- GET /__mask-debug/health
+- GET /__mask-debug/latest/status.json
+- POST /__mask-debug/log
