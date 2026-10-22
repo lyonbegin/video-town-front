@@ -112,6 +112,14 @@ function sameOriginAllowed(req) {
 
   if (!origin) return true;
 
+  if (
+    process.env
+      .MASK_DEBUG_ALLOW_CROSS_ORIGIN !==
+    '0'
+  ) {
+    return true;
+  }
+
   try {
     const originHost =
       new URL(origin).host;
@@ -1615,6 +1623,17 @@ function serveFile(
   const stat =
     statSync(filePath);
 
+  const sdkRoot =
+    path.join(
+      DIST_DIR,
+      'sdk',
+    ) + path.sep;
+
+  const isSdkAsset =
+    filePath.startsWith(
+      sdkRoot,
+    );
+
   res.writeHead(200, {
     'content-type':
       MIME_TYPES[ext] ||
@@ -1624,6 +1643,14 @@ function serveFile(
       cache
         ? 'public, max-age=3600'
         : 'no-cache',
+    ...(isSdkAsset
+      ? {
+          'access-control-allow-origin':
+            '*',
+          'cross-origin-resource-policy':
+            'cross-origin',
+        }
+      : {}),
   });
 
   createReadStream(filePath).pipe(res);
@@ -1637,6 +1664,50 @@ const server =
         req.url || '/',
         `http://${req.headers.host || 'localhost'}`,
       );
+
+      const crossOriginSdkRequest =
+        url.pathname.startsWith(
+          '/sdk/',
+        );
+
+      const crossOriginDiagnosticRequest =
+        url.pathname ===
+          '/__runtime-probe' ||
+        url.pathname.startsWith(
+          '/__mask-debug/',
+        );
+
+      if (
+        crossOriginSdkRequest ||
+        crossOriginDiagnosticRequest
+      ) {
+        res.setHeader(
+          'access-control-allow-origin',
+          '*',
+        );
+        res.setHeader(
+          'cross-origin-resource-policy',
+          'cross-origin',
+        );
+      }
+
+      if (
+        req.method === 'OPTIONS' &&
+        crossOriginDiagnosticRequest
+      ) {
+        res.writeHead(204, {
+          'access-control-allow-origin':
+            '*',
+          'access-control-allow-methods':
+            'GET,POST,OPTIONS',
+          'access-control-allow-headers':
+            'content-type',
+          'access-control-max-age':
+            '86400',
+        });
+        res.end();
+        return;
+      }
 
       if (
         req.method === 'GET' &&
