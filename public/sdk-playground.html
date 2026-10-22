@@ -1,1 +1,191 @@
-<!doctype html>\n<html lang="ko">\n<head>\n  <meta charset="UTF-8" />\n  <meta name="viewport" content="width=device-width,initial-scale=1" />\n  <title>Video Core Standalone SDK Playground</title>\n  <script type="importmap">\n  {\n    "imports": {\n      "three": "https://unpkg.com/three@0.160.0/build/three.module.js",\n      "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/",\n      "mindar-face-three": "https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-face-three.prod.js"\n    }\n  }\n  </script>\n  <style>\n    body{font-family:system-ui,sans-serif;margin:0;background:#0d1720;color:#edf6fb}\n    main{max-width:980px;margin:auto;padding:24px}\n    .card{background:#16232e;border:1px solid #294052;border-radius:16px;padding:20px;margin:16px 0}\n    button{padding:12px 16px;margin:6px;border:0;border-radius:10px;cursor:pointer}\n    video{width:100%;max-height:65vh;background:#000;border-radius:12px;object-fit:contain}\n    code{white-space:pre-wrap;word-break:break-all}\n    .status{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px}\n    .status div{background:#0d1720;padding:12px;border-radius:10px}\n    .error{color:#ffb4b4}\n  </style>\n</head>\n<body>\n<main>\n  <h1>Video Core Standalone SDK Playground</h1>\n  <p>React 내부 코드를 직접 쓰지 않고 배포된 <code>/sdk/video-core.esm.js</code>만 불러서 테스트합니다.</p>\n  <section class="card">\n    <div class="status">\n      <div>SDK <strong id="version">-</strong></div>\n      <div>Mode <strong id="mode">-</strong></div>\n      <div>FPS <strong id="fps">-</strong></div>\n      <div>SDK URL <code id="sdk-url"></code></div>\n    </div>\n    <p>\n      <button id="mask">가면 시작</button>\n      <button id="original">원본 시작</button>\n      <button id="stop">종료</button>\n      <a href="/advanced" style="color:#9ed7ff;margin-left:12px">고급 진단</a>\n    </p>\n    <video id="preview" autoplay playsinline muted></video>\n    <p id="error" class="error"></p>\n  </section>\n</main>\n<script type="module">\nconst sdkUrl = new URL("/sdk/video-core.esm.js", location.origin).href;\ndocument.querySelector("#sdk-url").textContent = sdkUrl;\nconst sdk = await import(sdkUrl);\ndocument.querySelector("#version").textContent = sdk.VIDEO_CORE_SDK_VERSION;\nconst core = await sdk.VideoCore.create();\nlet session = null;\nlet timer = null;\nasync function start(mode) {\n  document.querySelector("#error").textContent = "";\n  try {\n    if (session) session.stop();\n    session = await core.openCamera({ mode: mode });\n    document.querySelector("#preview").srcObject = session.stream;\n    document.querySelector("#mode").textContent = mode;\n    clearInterval(timer);\n    timer = setInterval(function () {\n      const status = session && session.getTrackingStatus();\n      document.querySelector("#fps").textContent = status ? status.fps.toFixed(1) : "-";\n    }, 250);\n  } catch (error) {\n    document.querySelector("#error").textContent = error instanceof Error ? error.message : String(error);\n  }\n}\ndocument.querySelector("#mask").addEventListener("click", function () { start("mask"); });\ndocument.querySelector("#original").addEventListener("click", function () { start("original"); });\ndocument.querySelector("#stop").addEventListener("click", function () {\n  if (session) session.stop();\n  session = null;\n  clearInterval(timer);\n  document.querySelector("#preview").srcObject = null;\n  document.querySelector("#mode").textContent = "-";\n  document.querySelector("#fps").textContent = "-";\n});\n</script>\n</body>\n</html>\n
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <meta name="theme-color" content="#0d1720" />
+  <title>Video Core SDK Playground</title>
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+      "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/",
+      "mindar-face-three": "https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-face-three.prod.js"
+    }
+  }
+  </script>
+  <style>
+    :root {
+      font-family: Inter, Pretendard, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: #edf6fb;
+      background: #0d1720;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-height: 100vh; background: #0d1720; }
+    main { width: min(1080px, 100%); margin: 0 auto; padding: 24px; }
+    h1 { margin: 0 0 8px; font-size: clamp(28px, 5vw, 44px); }
+    p { line-height: 1.6; color: #bad0df; }
+    .card {
+      background: #16232e;
+      border: 1px solid #294052;
+      border-radius: 18px;
+      padding: 18px;
+      margin-top: 18px;
+      box-shadow: 0 12px 40px rgba(0,0,0,.22);
+    }
+    .status {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+      gap: 10px;
+    }
+    .status > div {
+      min-width: 0;
+      background: #0d1720;
+      padding: 12px;
+      border-radius: 12px;
+    }
+    .status span { display: block; color: #8eabba; font-size: 12px; margin-bottom: 5px; }
+    code { white-space: pre-wrap; word-break: break-all; }
+    .controls { display: flex; gap: 8px; flex-wrap: wrap; margin: 16px 0; }
+    button, a.button {
+      appearance: none;
+      border: 0;
+      border-radius: 11px;
+      padding: 11px 15px;
+      font: inherit;
+      font-weight: 700;
+      cursor: pointer;
+      text-decoration: none;
+    }
+    button.primary { background: #edf6fb; color: #0d1720; }
+    button.secondary, a.button { background: #273b4b; color: #edf6fb; }
+    button.stop { background: #4b2730; color: #ffdce4; }
+    video {
+      display: block;
+      width: 100%;
+      max-height: 68vh;
+      min-height: 260px;
+      object-fit: contain;
+      background: #000;
+      border-radius: 14px;
+    }
+    .error { color: #ffb4b4; min-height: 1.5em; }
+    .hint { font-size: 13px; color: #8eabba; }
+    @media (max-width: 640px) {
+      main { padding: 16px; }
+      .card { padding: 14px; border-radius: 14px; }
+      button, a.button { flex: 1 1 calc(50% - 8px); text-align: center; }
+      video { min-height: 220px; }
+    }
+  </style>
+</head>
+<body>
+<main>
+  <h1>Video Core SDK Playground</h1>
+  <p>
+    이 화면은 React 내부 구현을 직접 사용하지 않고,
+    배포된 <code>/sdk/video-core.esm.js</code>만 import해서
+    카메라·마이크·실시간 얼굴 가면을 검증합니다.
+  </p>
+
+  <section class="card">
+    <div class="status">
+      <div><span>SDK VERSION</span><strong id="version">-</strong></div>
+      <div><span>MODE</span><strong id="mode">-</strong></div>
+      <div><span>TRACKING FPS</span><strong id="fps">-</strong></div>
+      <div><span>SDK URL</span><code id="sdk-url"></code></div>
+    </div>
+
+    <div class="controls">
+      <button class="primary" id="mask">가면 시작</button>
+      <button class="secondary" id="original">원본 시작</button>
+      <button class="stop" id="stop">종료</button>
+      <a class="button" href="/advanced">고급 진단</a>
+    </div>
+
+    <video id="preview" autoplay playsinline muted></video>
+    <p id="error" class="error"></p>
+    <p class="hint">
+      첫 실행 시 브라우저의 카메라·마이크 권한을 허용해야 합니다.
+    </p>
+  </section>
+</main>
+
+<script type="module">
+  const versionEl = document.querySelector("#version");
+  const modeEl = document.querySelector("#mode");
+  const fpsEl = document.querySelector("#fps");
+  const sdkUrlEl = document.querySelector("#sdk-url");
+  const preview = document.querySelector("#preview");
+  const errorEl = document.querySelector("#error");
+
+  const sdkUrl = new URL("/sdk/video-core.esm.js", location.origin).href;
+  sdkUrlEl.textContent = sdkUrl;
+
+  let sdk;
+  let core;
+  let session = null;
+  let timer = null;
+
+  function setError(error) {
+    errorEl.textContent = error
+      ? (error instanceof Error ? error.message : String(error))
+      : "";
+  }
+
+  function stopSession() {
+    if (session) {
+      session.stop();
+      session = null;
+    }
+
+    if (timer) {
+      clearInterval(timer);
+      timer = null;
+    }
+
+    preview.srcObject = null;
+    modeEl.textContent = "-";
+    fpsEl.textContent = "-";
+  }
+
+  async function ensureSdk() {
+    if (core) return;
+
+    sdk = await import(sdkUrl);
+    versionEl.textContent = sdk.VIDEO_CORE_SDK_VERSION;
+    core = await sdk.VideoCore.create();
+  }
+
+  async function start(mode) {
+    setError("");
+    stopSession();
+
+    try {
+      await ensureSdk();
+
+      session = await core.openCamera({ mode });
+      preview.srcObject = session.stream;
+      modeEl.textContent = mode;
+
+      timer = window.setInterval(() => {
+        const status = session?.getTrackingStatus();
+        fpsEl.textContent = status
+          ? status.fps.toFixed(1)
+          : "-";
+      }, 250);
+    } catch (error) {
+      stopSession();
+      setError(error);
+    }
+  }
+
+  document.querySelector("#mask").addEventListener("click", () => start("mask"));
+  document.querySelector("#original").addEventListener("click", () => start("original"));
+  document.querySelector("#stop").addEventListener("click", stopSession);
+  window.addEventListener("beforeunload", stopSession);
+
+  ensureSdk().catch(setError);
+</script>
+</body>
+</html>
