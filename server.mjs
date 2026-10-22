@@ -1712,6 +1712,28 @@ const server =
       if (
         req.method === 'GET' &&
         url.pathname ===
+          '/health'
+      ) {
+        sendJson(
+          res,
+          200,
+          {
+            ok: true,
+            service: 'video-core',
+            runtimeVersion:
+              MASK_RUNTIME_VERSION,
+            railwayCommitSha:
+              process.env
+                .RAILWAY_GIT_COMMIT_SHA ||
+              null,
+          },
+        );
+        return;
+      }
+
+      if (
+        req.method === 'GET' &&
+        url.pathname ===
           '/__runtime-probe'
       ) {
         sendJson(
